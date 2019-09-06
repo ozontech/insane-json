@@ -883,7 +883,7 @@ func BenchmarkDecode(b *testing.B) {
 			b.SetBytes(int64(len(benchmark.json)))
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_, _ = DecodeBytesReusing(root, benchmark.json)
+				_ = DecodeBytesReusing(root, benchmark.json)
 			}
 			Release(root)
 		})

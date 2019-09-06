@@ -1511,11 +1511,16 @@ func DecodeString(json string) (*Root, error) {
 	return Spawn().data.decoder.decodeHeadless(json, true)
 }
 
-func DecodeBytesReusing(root *Root, jsonBytes []byte) (*Root, error) {
-	return root.data.decoder.decodeHeadless(toString(jsonBytes), false)
+func DecodeBytesReusing(root *Root, jsonBytes []byte) error {
+	_, err := root.data.decoder.decodeHeadless(toString(jsonBytes), false)
+
+	return err
 }
-func DecodeStringReusing(root *Root, json string) (*Root, error) {
-	return root.data.decoder.decodeHeadless(json, false)
+
+func DecodeStringReusing(root *Root, json string) error {
+	_, err := root.data.decoder.decodeHeadless(json, false)
+
+	return err
 }
 
 func Release(root *Root) {
@@ -1894,15 +1899,15 @@ var out = make([]byte, 0, 0)
 var root = Spawn()
 
 func Fuzz(data []byte) int {
-	root, err := DecodeBytesReusing(root, data)
+	err := DecodeBytesReusing(root, data)
 	if err != nil {
 		return -1
 	}
 
 	fields := []string{
-		"1", "2", "3", "4", "5","6", "7", "8", "9", "10",
-		"11", "21", "31", "41", "51","61", "71", "81", "91", "101",
-		"111", "211", "311", "411", "511","611", "711", "811", "911", "1011",
+		"1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
+		"11", "21", "31", "41", "51", "61", "71", "81", "91", "101",
+		"111", "211", "311", "411", "511", "611", "711", "811", "911", "1011",
 	}
 	jsons := []string{
 		"1", "2", "3", "4", "5",
