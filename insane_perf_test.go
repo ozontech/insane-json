@@ -133,7 +133,7 @@ func BenchmarkFair(b *testing.B) {
 		fn   func(b *testing.B, jsons [][]byte, fields [][][]string, reqCount int)
 	}{
 		{
-			name: "insane-json",
+			name: "complex",
 			fn: func(b *testing.B, jsons [][]byte, fields [][][]string, reqCount int) {
 				root := Spawn()
 				for i := 0; i < b.N; i++ {
@@ -152,30 +152,117 @@ func BenchmarkFair(b *testing.B) {
 				Release(root)
 			},
 		},
-	}
-
-	workload, size := getStableWorkload()
-	for _, pretender := range pretenders {
-		b.Run("stable-flavor|"+pretender.name, func(b *testing.B) {
-			b.SetBytes(size * int64(len(requestsCount)))
-			b.ResetTimer()
-			for _, reqCount := range requestsCount {
-				for _, w := range workload {
-					pretender.fn(b, [][]byte{w.json}, [][][]string{w.requests}, reqCount)
+		{
+			name: "get",
+			fn: func(b *testing.B, jsons [][]byte, fields [][][]string, reqCount int) {
+				root := Spawn()
+				for _, json := range jsons {
+					_ = DecodeBytesReusing(root, json)
+					for j := 0; j < reqCount; j++ {
+						for _, f := range fields {
+							for _, ff := range f {
+								for i := 0; i < b.N; i++ {
+									root.Dig(ff...)
+								}
+							}
+						}
+					}
 				}
-			}
-		})
+				Release(root)
+			},
+		},
 	}
 
-	//todo: we are loosing this benchmark because poor Dig() performance
-	workloads, requests, size := getChaoticWorkload()
-	for _, pretender := range pretenders {
-		b.Run("chaotic-flavor|"+pretender.name, func(b *testing.B) {
-			b.SetBytes(size * int64(len(requestsCount)))
-			b.ResetTimer()
-			for _, reqCount := range requestsCount {
-				pretender.fn(b, workloads, requests, reqCount)
+	workload, stableSize := getStableWorkload()
+	workloads, requests, chaoticSize := getChaoticWorkload()
+	//
+	b.Run("complex-stable-flavor|"+pretenders[0].name, func(b *testing.B) {
+		b.SetBytes(stableSize * int64(len(requestsCount)))
+		b.ResetTimer()
+		for _, reqCount := range requestsCount {
+			for _, w := range workload {
+				pretenders[0].fn(b, [][]byte{w.json}, [][][]string{w.requests}, reqCount)
 			}
-		})
+		}
+	})
+
+	b.Run("complex-chaotic-flavor|"+pretenders[0].name, func(b *testing.B) {
+		b.SetBytes(chaoticSize * int64(len(requestsCount)))
+		b.ResetTimer()
+		for _, reqCount := range requestsCount {
+			pretenders[0].fn(b, workloads, requests, reqCount)
+		}
+	})
+
+	b.Run("get-stable-flavor|"+pretenders[1].name, func(b *testing.B) {
+		b.SetBytes(stableSize)
+		b.ResetTimer()
+		for _, w := range workload {
+			pretenders[1].fn(b, [][]byte{w.json}, [][][]string{w.requests}, 1)
+		}
+	})
+
+	b.Run("get-chaotic-flavor|"+pretenders[1].name, func(b *testing.B) {
+		b.SetBytes(chaoticSize)
+		b.ResetTimer()
+		pretenders[1].fn(b, workloads, requests, 1)
+	})
+}
+
+func BenchmarkValueDecodeInt(b *testing.B) {
+	tests := []struct {
+		s string
+		n int64
+	}{
+		{s: "", n: 0},
+		{s: " ", n: 0},
+		{s: "xxx", n: 0},
+		{s: "-xxx", n: 0},
+		{s: "1xxx", n: 0},
+		{s: "-", n: 0},
+		{s: "111 ", n: 0},
+		{s: "1-1", n: 0},
+		{s: "s1", n: 0},
+		{s: "0", n: 0},
+		{s: "-0", n: 0},
+		{s: "5", n: 5},
+		{s: "-5", n: -5},
+		{s: " 0", n: 0},
+		{s: " 5", n: 0},
+		{s: "333", n: 333},
+		{s: "-333", n: -333},
+		{s: "1111111111", n: 1111111111},
+		{s: "987654321", n: 987654321},
+		{s: "123456789", n: 123456789},
+		{s: "9223372036854775807", n: 9223372036854775807},
+		{s: "-9223372036854775807", n: -9223372036854775807},
+		{s: "9999999999999999999", n: 0},
+		{s: "99999999999999999999", n: 0},
+		{s: "-9999999999999999999", n: 0},
+		{s: "-99999999999999999999", n: 0},
+	}
+
+	for i := 0; i < b.N; i++ {
+		for _, test := range tests {
+			decodeInt64(test.s)
+		}
+	}
+
+}
+
+func BenchmarkValueEscapeString(b *testing.B) {
+	tests := []struct {
+		s string
+	}{
+		{s: `"""\\\\\"""\'\"				\\\""|"|"|"|\\'\dasd'		|"|\\\\'\\\|||\\'"`},
+		{s: `sfsafwefqwueibfiquwbfiuqwebfiuqwbfiquwbfqiwbfoqiwuefb""""""""""""""""""""""""`},
+		{s: `sfsafwefqwueibfiquwbfiuqwebfiuqwbfiquwbfqiwbfoqiwuefbxxxxxxxxxxxxxxxxxxxxxxx"`},
+	}
+
+	out := make([]byte, 0, 0)
+	for i := 0; i < b.N; i++ {
+		for _, test := range tests {
+			out = escapeString(out[:0], test.s)
+		}
 	}
 }

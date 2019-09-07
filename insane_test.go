@@ -22,7 +22,7 @@ func TestDecodeLight(t *testing.T) {
 	assert.Equal(t, Object, root.Type, "Wrong first node")
 }
 
-func TestDecodeReuseing(t *testing.T) {
+func TestDecodeReusing(t *testing.T) {
 	json := `{"_id":"5d53006246df0b962b787d11","index":"0","guid":"80d75945-6251-46a2-b6c9-a10094beed6e","isActive":"false","balance":"$2,258.24","picture":"http://placehold.it/32x32","age":"34","eyeColor":"brown","company":"NIMON","email":"anne.everett@nimon.name","phone":"+1(946)560-2227","address":"815EmpireBoulevard,Blue,Nevada,5617","about":"Proidentoccaecateulaborislaboreofficialaborumvelitanimnulla.Laboreametoccaecataliquaminimlaboreadenimdolorelaborum.Eiusmodesseeiusmodaliquacillumullamcodonisivelitesseincididunt.Ininestessereprehenderitirureaniminsit.","registered":"Friday,May27,20165:05AM","latitude":"-5.922381","longitude":"-49.143968","greeting":"Hello,Anne!Youhave7unreadmessages.","favoriteFruit":"banana"}`
 	root := Spawn()
 	err := DecodeStringReusing(root, json)

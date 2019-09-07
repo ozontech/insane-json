@@ -13,6 +13,14 @@ import (
 	"unsafe"
 )
 
+// ===LATEST BENCH RESULTS===
+// BenchmarkFair/complex-stable-flavor|complex-4         	    1000	   2014381 ns/op	 638.58 MB/s	    2107 B/op	      10 allocs/op
+// BenchmarkFair/complex-chaotic-flavor|complex-4        	    3000	    516549 ns/op	 160.88 MB/s	   36291 B/op	     756 allocs/op
+// BenchmarkFair/get-stable-flavor|get-4                 	 2000000	       968 ns/op	664405.82 MB/s	       0 B/op	       0 allocs/op
+// BenchmarkFair/get-chaotic-flavor|get-4                	  200000	     10884 ns/op	3817.32 MB/s	    4032 B/op	      84 allocs/op
+// BenchmarkValueDecodeInt-4                             	 2000000	       920 ns/op	     288 B/op	       6 allocs/op
+// BenchmarkValueEscapeString-4                          	 1000000	      1821 ns/op	       0 B/op	       0 allocs/op
+
 const (
 	Object Type = 0
 	Array  Type = 1
@@ -648,9 +656,6 @@ get:
 			result := node.data.values[index].next
 			result.data.dirtySeq = node.data.dirtySeq
 			result.data.index = index
-			if result.Type == escapedString {
-				result.unescapeStr()
-			}
 
 			return result
 		}
@@ -671,9 +676,6 @@ get:
 				result := field.next
 				result.data.dirtySeq = node.data.dirtySeq
 				result.data.index = index
-				if result.Type == escapedString {
-					result.unescapeStr()
-				}
 
 				return result
 			}
@@ -693,9 +695,6 @@ getArray:
 		result := node.data.values[index]
 		result.data.dirtySeq = node.data.dirtySeq
 		result.data.index = index
-		if result.Type == escapedString {
-			result.unescapeStr()
-		}
 
 		return result
 	}
@@ -1207,10 +1206,6 @@ func (n *Node) AsFieldValue() *Node {
 		return nil
 	}
 
-	if n.next.Type == escapedString {
-		n.next.unescapeStr()
-	}
-
 	return n.next
 }
 
@@ -1230,24 +1225,12 @@ func (n *Node) AsArray() []*Node {
 		return n.data.values[:0]
 	}
 
-	for _, node := range n.data.values {
-		if node.Type == escapedString {
-			node.unescapeStr()
-		}
-	}
-
 	return n.data.values
 }
 
 func (n *StrictNode) AsArray() ([]*Node, error) {
 	if n == nil || n.Type != Array {
 		return nil, ErrNotArray
-	}
-
-	for _, node := range n.data.values {
-		if node.Type == escapedString {
-			node.unescapeStr()
-		}
 	}
 
 	return n.data.values, nil
@@ -1274,6 +1257,9 @@ func (n *Node) AsString() string {
 	switch n.Type {
 	case String:
 		return n.value
+	case escapedString:
+		n.unescapeStr()
+		return n.value
 	case Number:
 		return n.value
 	case True:
@@ -1284,8 +1270,6 @@ func (n *Node) AsString() string {
 		return "null"
 	case Field:
 		return n.value
-	case escapedString:
-		panic("insane json really goes outta its mind")
 	case escapedField:
 		panic("insane json really goes outta its mind")
 	default:
@@ -1294,8 +1278,12 @@ func (n *Node) AsString() string {
 }
 
 func (n *StrictNode) AsString() (string, error) {
-	if n.Type == escapedString || n.Type == escapedField {
+	if n.Type == escapedField {
 		panic("insane json really goes outta its mind")
+	}
+
+	if n.Type == escapedString {
+		n.unescapeStr()
 	}
 
 	if n == nil || n.Type != String {
@@ -1313,6 +1301,9 @@ func (n *Node) AsBool() bool {
 	switch n.Type {
 	case String:
 		return n.value == "true"
+	case escapedString:
+		n.unescapeStr()
+		return n.value == "true"
 	case Number:
 		return n.value != "0"
 	case True:
@@ -1323,8 +1314,6 @@ func (n *Node) AsBool() bool {
 		return false
 	case Field:
 		return n.value == "true"
-	case escapedString:
-		panic("insane json really goes outta its mind")
 	case escapedField:
 		panic("insane json really goes outta its mind")
 	default:
@@ -1348,6 +1337,9 @@ func (n *Node) AsInt() int {
 	switch n.Type {
 	case String:
 		return int(math.Round(decodeFloat64(n.value)))
+	case escapedString:
+		n.unescapeStr()
+		return int(math.Round(decodeFloat64(n.value)))
 	case Number:
 		return int(math.Round(decodeFloat64(n.value)))
 	case True:
@@ -1358,8 +1350,6 @@ func (n *Node) AsInt() int {
 		return 0
 	case Field:
 		return int(math.Round(decodeFloat64(n.value)))
-	case escapedString:
-		panic("insane json really goes outta its mind")
 	case escapedField:
 		panic("insane json really goes outta its mind")
 	default:
@@ -1382,6 +1372,9 @@ func (n *Node) AsFloat() float64 {
 	switch n.Type {
 	case String:
 		return decodeFloat64(n.value)
+	case escapedString:
+		n.unescapeStr()
+		return decodeFloat64(n.value)
 	case Number:
 		return decodeFloat64(n.value)
 	case True:
@@ -1392,8 +1385,6 @@ func (n *Node) AsFloat() float64 {
 		return 0
 	case Field:
 		return decodeFloat64(n.value)
-	case escapedString:
-		panic("insane json really goes outta its mind")
 	case escapedField:
 		panic("insane json really goes outta its mind")
 	default:
@@ -1422,7 +1413,7 @@ func (n *Node) IsNumber() bool {
 }
 
 func (n *Node) IsString() bool {
-	return n != nil && n.Type == String
+	return n != nil && (n.Type == String || n.Type == escapedString)
 }
 
 func (n *Node) IsTrue() bool {
@@ -1546,6 +1537,7 @@ func toByte(s string) []byte {
 	return *(*[]byte)(unsafe.Pointer(&slice))
 }
 
+// this code copied from really cool and fast https://github.com/valyala/fastjson
 func unescapeStr(s string) string {
 	n := strings.IndexByte(s, '\\')
 	if n < 0 {
@@ -1753,7 +1745,7 @@ func decodeInt64(s string) int64 {
 	}
 }
 
-// this code copied from https://github.com/valyala/fastjson
+// this code copied from really cool and fast https://github.com/valyala/fastjson
 func decodeFloat64(s string) float64 {
 	if len(s) == 0 {
 		return 0

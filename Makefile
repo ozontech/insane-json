@@ -1,10 +1,6 @@
 .PHONY: bench
 bench:
-	go test  . -benchmem -bench BenchmarkFair -count 1 -run _ -cpuprofile cpu.out -memprofile mem.out
-
-.PHONY: bench-values
-bench-values:
-	go test  . -benchmem -bench BenchmarkValue -count 1 -run _ -cpuprofile cpu.out -memprofile mem.out
+	go test  . -benchmem -bench Benchmark -count 1 -run _ -cpuprofile cpu.out -memprofile mem.out
 
 .PHONY: test
 test:
