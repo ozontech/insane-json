@@ -1111,11 +1111,23 @@ func (n *Node) MutateToNull(value bool) *Node {
 
 func (n *Node) MutateToString(value string) *Node {
 	if n.Type == Field {
-		return n
+		return nil
 	}
 	n.tryDropLinks()
 
 	n.Type = String
+	n.value = value
+
+	return n
+}
+
+func (n *Node) MutateToEscapedString(value string) *Node {
+	if n.Type == Field {
+		return nil
+	}
+	n.tryDropLinks()
+
+	n.Type = escapedString
 	n.value = value
 
 	return n
@@ -1291,6 +1303,49 @@ func (n *StrictNode) AsString() (string, error) {
 	}
 
 	return n.value, nil
+}
+
+func (n *Node) AsEscapedString() string {
+	if n == nil {
+		return ""
+	}
+
+	switch n.Type {
+	case String:
+		return toString(escapeString(make([]byte, 0, 0), n.value))
+	case escapedString:
+		return n.value
+	case Number:
+		return n.value
+	case True:
+		return "true"
+	case False:
+		return "false"
+	case Null:
+		return "null"
+	case Field:
+		return n.value
+	case escapedField:
+		panic("insane json really goes outta its mind")
+	default:
+		return ""
+	}
+}
+
+func (n *StrictNode) AsEscapedString() (string, error) {
+	if n.Type == escapedField {
+		panic("insane json really goes outta its mind")
+	}
+
+	if n == nil || n.Type != String {
+		return "", ErrNotString
+	}
+
+	if n.Type == escapedString {
+		return n.value, nil
+	}
+
+	return toString(escapeString(make([]byte, 0, 0), n.value)), nil
 }
 
 func (n *Node) AsBool() bool {
@@ -1612,80 +1667,74 @@ func unescapeStr(s string) string {
 	return toString(b)
 }
 
-// this code mostly copied from go standard library
-func escapeString(out []byte, s string) []byte {
-	if !shouldBeEscaped(s) {
+func escapeString(out []byte, st string) []byte {
+	if !shouldBeEscaped(st) {
 		out = append(out, '"')
-		out = append(out, s...)
+		out = append(out, st...)
 		out = append(out, '"')
 		return out
 	}
 
-	quote := byte('"')
-	out = append(out, quote)
-	o := 0
-	width := 0
-	for ; o < len(s); o += width {
-		r := rune(s[o])
-		width = 1
-		if r >= utf8.RuneSelf {
-			r, width = utf8.DecodeRuneInString(s)
-		}
-		if width == 1 && r == utf8.RuneError {
-			out = append(out, `\x`...)
-			out = append(out, hex[s[o]>>4])
-			out = append(out, hex[s[o]&0xF])
-			continue
-		}
-		var runeTmp [utf8.UTFMax]byte
-		if r == rune(quote) || r == '\\' {
-			out = append(out, '\\')
-			out = append(out, byte(r))
-			continue
-		}
-		if strconv.IsPrint(r) {
-			n := utf8.EncodeRune(runeTmp[:], r)
-			out = append(out, runeTmp[:n]...)
-			continue
-		}
-		switch r {
-		case '\a':
-			out = append(out, `\a`...)
-		case '\b':
-			out = append(out, `\b`...)
-		case '\f':
-			out = append(out, `\f`...)
-		case '\n':
-			out = append(out, `\n`...)
-		case '\r':
-			out = append(out, `\r`...)
-		case '\t':
-			out = append(out, `\t`...)
-		case '\v':
-			out = append(out, `\v`...)
-		default:
-			switch {
-			case r < ' ':
-				out = append(out, `\x`...)
-				out = append(out, hex[byte(r)>>4])
-				out = append(out, hex[byte(r)&0xF])
-			case r > utf8.MaxRune:
-				r = 0xFFFD
-				fallthrough
-			case r < 0x10000:
-				out = append(out, `\u`...)
-				for s := 12; s >= 0; s -= 4 {
-					out = append(out, hex[r>>uint(s)&0xF])
-				}
-			default:
-				out = append(out, `\U`...)
-				for s := 28; s >= 0; s -= 4 {
-					out = append(out, hex[r>>uint(s)&0xF])
-				}
+	out = append(out, '"')
+	s := toByte(st)
+	start := 0
+	for i := 0; i < len(s); {
+		if b := s[i]; b < utf8.RuneSelf {
+			if 0x20 <= b && b != '\\' && b != '"' && b != '<' && b != '>' && b != '&' {
+				i++
+				continue
 			}
+			if start < i {
+				out = append(out, s[start:i]...)
+			}
+			switch b {
+			case '\\', '"':
+				out = append(out, '\\')
+				out = append(out, b)
+			case '\n':
+				out = append(out, "\\n"...)
+			case '\r':
+				out = append(out, "\\r"...)
+			case '\t':
+				out = append(out, "\\t"...)
+			default:
+				out = append(out, "\\u00"...)
+				out = append(out, hex[b>>4])
+				out = append(out, hex[b&0xf])
+			}
+			i++
+			start = i
+			continue
 		}
+
+		c, size := utf8.DecodeRune(s[i:])
+		if c == utf8.RuneError && size == 1 {
+			if start < i {
+				out = append(out, s[start:i]...)
+			}
+			out = append(out, "\\ufffd"...)
+			i += size
+			start = i
+			continue
+		}
+
+		if c == '\u2028' || c == '\u2029' {
+			if start < i {
+				out = append(out, s[start:i]...)
+			}
+			out = append(out, "\\u202"...)
+			out = append(out, hex[c&0xF])
+			i += size
+			start = i
+			continue
+		}
+		i += size
 	}
-	out = append(out, quote)
+	if start < len(s) {
+		out = append(out, s[start:]...)
+	}
+	out = append(out, '"')
+
 	return out
 }
 
