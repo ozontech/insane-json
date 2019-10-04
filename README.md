@@ -83,7 +83,7 @@ To be filled
     root, err = insaneJSON.DecodeString(json)              // get a root from the pool and place decoded json into it 
     emptyRoot = insaneJSON.Spawn()                         // get an empty root from the pool            
 
-    insaneJSON.DecodeStringReusing(emptyRoot, anotherJson) // reuse a root to decode another JSONs
+    root.DecodeString(emptyRoot, anotherJson)              // reuse a root to decode another JSONs
 
     insaneJSON.Release(root)                               // place roots back to the pool
     insaneJSON.Release(emptyRoot)                           

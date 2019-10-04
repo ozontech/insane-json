@@ -25,12 +25,27 @@ func TestDecodeLight(t *testing.T) {
 func TestDecodeReusing(t *testing.T) {
 	json := `{"_id":"5d53006246df0b962b787d11","index":"0","guid":"80d75945-6251-46a2-b6c9-a10094beed6e","isActive":"false","balance":"$2,258.24","picture":"http://placehold.it/32x32","age":"34","eyeColor":"brown","company":"NIMON","email":"anne.everett@nimon.name","phone":"+1(946)560-2227","address":"815EmpireBoulevard,Blue,Nevada,5617","about":"Proidentoccaecateulaborislaboreofficialaborumvelitanimnulla.Laboreametoccaecataliquaminimlaboreadenimdolorelaborum.Eiusmodesseeiusmodaliquacillumullamcodonisivelitesseincididunt.Ininestessereprehenderitirureaniminsit.","registered":"Friday,May27,20165:05AM","latitude":"-5.922381","longitude":"-49.143968","greeting":"Hello,Anne!Youhave7unreadmessages.","favoriteFruit":"banana"}`
 	root := Spawn()
-	err := DecodeStringReusing(root, json)
+	err := root.DecodeString(json)
 	defer Release(root)
 
 	assert.Nil(t, err, "Error while decoding")
 	assert.NotNil(t, root, "Node is nil")
 	assert.Equal(t, Object, root.Type, "Wrong first node")
+}
+
+func TestDecodeAdditional(t *testing.T) {
+	jsonA := `{"_id":"5d53006246df0b962b787d11"}`
+	root, err := DecodeString(jsonA)
+	assert.NotNil(t, root, "Node is nil")
+	assert.Nil(t, err, "Error while decoding")
+
+	jsonB := `{"additional":"ok"}`
+	node, err := root.DecodeStringAdditional(jsonB)
+	assert.NotNil(t, node, "Node is nil")
+	assert.Nil(t, err, "Error while decoding")
+
+	assert.Equal(t, jsonA, root.EncodeToString(), "Wrong first node")
+	assert.Equal(t, "ok", node.Dig("additional").AsString(), "Wrong value")
 }
 
 func TestDecodeManyObjects(t *testing.T) {
@@ -187,7 +202,7 @@ func TestDecodeErr(t *testing.T) {
 			assert.NotNil(t, err, "Where should be an error decoding %s", test.json)
 		} else {
 			assert.Nil(t, err, "Where shouldn't be an error %s", test.json)
-			root.Encode()
+			root.EncodeToByte()
 		}
 		assert.Equal(t, test.err, err, "Wrong err %s", test.json)
 		Release(root)
@@ -202,7 +217,7 @@ func TestEncode(t *testing.T) {
 	assert.Nil(t, err, "Error while decoding")
 	assert.NotNil(t, node, "Node is nil")
 
-	encoded := node.Encode()
+	encoded := node.EncodeToByte()
 	assert.Equal(t, json, string(encoded), "Wrong encoding")
 }
 
@@ -218,7 +233,7 @@ func TestString(t *testing.T) {
 	assert.Equal(t, `hello \ " op \ " op op`, node.Dig("0").AsString(), "Wrong value")
 	assert.Equal(t, "shit", node.Dig("1").AsString(), "Wrong value")
 
-	encoded := node.Encode()
+	encoded := node.EncodeToByte()
 	assert.Equal(t, json, string(encoded), "Wrong encoding")
 }
 
@@ -232,7 +247,7 @@ func TestField(t *testing.T) {
 
 	assert.Equal(t, "shit", node.Dig(`hello \ " op \ " op op`).AsString(), "Wrong value")
 
-	encoded := node.Encode()
+	encoded := node.EncodeToByte()
 	assert.Equal(t, json, string(encoded), "Wrong encoding")
 }
 
@@ -245,7 +260,7 @@ func TestInsane(t *testing.T) {
 	assert.Nil(t, err, "Error while decoding")
 	assert.NotNil(t, node, "Node is nil")
 
-	encoded := node.Encode()
+	encoded := node.EncodeToByte()
 	assert.Equal(t, 465158, len(encoded), "Wrong encoding")
 }
 
@@ -313,7 +328,7 @@ func TestAddField(t *testing.T) {
 			node.AddField(field)
 			assert.Equal(t, Null, node.Dig(field).Type, "Wrong type")
 		}
-		assert.Equal(t, test.result, string(node.Encode()), "Wrong json")
+		assert.Equal(t, test.result, string(node.EncodeToByte()), "Wrong json")
 		Release(node)
 	}
 }
@@ -341,7 +356,7 @@ func TestAppendElement(t *testing.T) {
 			l := len(node.AsArray())
 			assert.Equal(t, Null, node.Dig(strconv.Itoa(l - 1)).Type, "Wrong type")
 		}
-		assert.Equal(t, test.result, string(node.Encode()), "Wrong json")
+		assert.Equal(t, test.result, string(node.EncodeToByte()), "Wrong json")
 		Release(node)
 	}
 }
@@ -372,7 +387,7 @@ func TestInsertElement(t *testing.T) {
 		node.InsertElement(test.pos2)
 		assert.Equal(t, Null, node.Dig(strconv.Itoa(test.pos2)).Type, "Wrong type")
 
-		assert.Equal(t, test.result, string(node.Encode()), "Wrong json")
+		assert.Equal(t, test.result, string(node.EncodeToByte()), "Wrong json")
 		Release(node)
 	}
 }
@@ -439,7 +454,7 @@ func TestArraySuicide(t *testing.T) {
 			root.Dig("0").Suicide()
 		}
 		assert.Equal(t, 0, len(root.AsArray()), "array should be empty")
-		assert.Equal(t, `[]`, string(root.Encode()), "array should be empty")
+		assert.Equal(t, `[]`, string(root.EncodeToByte()), "array should be empty")
 		Release(root)
 
 		root, err = DecodeString(json)
@@ -450,7 +465,7 @@ func TestArraySuicide(t *testing.T) {
 		}
 
 		assert.Equal(t, 0, len(root.AsArray()), "array should be empty")
-		assert.Equal(t, `[]`, string(root.Encode()), "array should be empty")
+		assert.Equal(t, `[]`, string(root.EncodeToByte()), "array should be empty")
 		Release(root)
 	}
 }
@@ -476,7 +491,7 @@ func TestObjectSuicide(t *testing.T) {
 			root.Dig(field.AsString()).Suicide()
 		}
 		assert.Equal(t, 0, len(root.AsArray()), "array should be empty")
-		assert.Equal(t, `{}`, string(root.Encode()), "array should be empty")
+		assert.Equal(t, `{}`, string(root.EncodeToByte()), "array should be empty")
 		Release(root)
 
 		root, err = DecodeString(json)
@@ -490,75 +505,125 @@ func TestObjectSuicide(t *testing.T) {
 			root.Dig(field.AsString()).Suicide()
 		}
 		assert.Equal(t, 0, len(root.AsArray()), "array should be empty")
-		assert.Equal(t, `{}`, string(root.Encode()), "array should be empty")
+		assert.Equal(t, `{}`, string(root.EncodeToByte()), "array should be empty")
 		Release(root)
 	}
 }
 
+//func TestMergeWith(t *testing.T) {
+//	jsonA := `{"1":"1","2":"2"}`
+//	root, err := DecodeString(jsonA)
+//	assert.NotNil(t, root, "Node is nil")
+//	assert.Nil(t, err, "Error while decoding")
+//
+//	jsonB := `{"1":"1","3":"3","4":"4"}`
+//	node, err := root.DecodeStringAdditional(jsonB)
+//	assert.Nil(t, err, "Error while decoding")
+//	assert.NotNil(t, node, "Node is nil")
+//
+//	root.MergeWith(node)
+//
+//	assert.Equal(t, `{"1":"1","2":"2","3":"3","4":"4"}`, root.EncodeToString(), "Wrong first node")
+//}
+
+//func TestMergeWithComplex(t *testing.T) {
+//	jsonA := `{"1":{"1":"1"}}`
+//	root, err := DecodeString(jsonA)
+//	assert.NotNil(t, root, "Node is nil")
+//	assert.Nil(t, err, "Error while decoding")
+//
+//	jsonB := `{"1":1,"2":{"2":"2"}}`
+//	node, err := root.DecodeStringAdditional(jsonB)
+//	assert.Nil(t, err, "Error while decoding")
+//	assert.NotNil(t, node, "Node is nil")
+//
+//	root.MergeWith(node)
+//
+//	assert.Equal(t, `{"1":1,"2":{"2":"2"}}`, root.EncodeToString(), "Wrong first node")
+//}
+
 func TestMutateToJSON(t *testing.T) {
 	tests := []struct {
 		name        string
-		sourceJSON  string
-		mutateJSON  string
-		mutateDig   []string
-		resultJSON  string
+		source      string
+		mutation    string
+		dig         []string
+		result      string
 		checkDig    [][]string
 		checkValues []int
 	}{
 		{
-			sourceJSON:  `{"a":"b","c":"d"}`,
-			mutateJSON:  `{"5":"5","l":[3,4]}`,
-			mutateDig:   []string{"a"},
-			resultJSON:  `{"a":{"5":"5","l":[3,4]},"c":"d"}`,
+			source:      `{"a":"b","c":"4"}`,
+			dig:         []string{"a"},
+			mutation:    `5`,
+			result:      `{"a":5,"c":"4"}`,
+			checkDig:    [][]string{{"a"}, {"c"}},
+			checkValues: []int{5, 4},
+		},
+		{
+			source:      `{"a":"1","c":"4"}`,
+			dig:         []string{"c"},
+			mutation:    `6`,
+			result:      `{"a":"1","c":6}`,
+			checkDig:    [][]string{{"a"}, {"c"}},
+			checkValues: []int{1, 6},
+		},
+		{
+			source:      `{"a":"b","c":"d"}`,
+			dig:         []string{"a"},
+			mutation:    `{"5":"5","l":[3,4]}`,
+			result:      `{"a":{"5":"5","l":[3,4]},"c":"d"}`,
 			checkDig:    [][]string{{"a", "l", "0"}, {"a", "l", "1"}},
 			checkValues: []int{3, 4},
 		},
 		{
-			sourceJSON:  `{"a":"b","c":"d"}`,
-			mutateJSON:  `{"5":"5","l":[3,4]}`,
-			mutateDig:   []string{"c"},
-			resultJSON:  `{"a":"b","c":{"5":"5","l":[3,4]}}`,
+			source:      `{"a":"b","c":"d"}`,
+			dig:         []string{"c"},
+			mutation:    `{"5":"5","l":[3,4]}`,
+			result:      `{"a":"b","c":{"5":"5","l":[3,4]}}`,
 			checkDig:    [][]string{{"c", "l", "0"}, {"c", "l", "1"}},
 			checkValues: []int{3, 4},
 		},
 		{
-			sourceJSON:  `{"a":{"somekey":"someval", "xxx":"yyy"},"c":"d"}`,
-			mutateJSON:  `{"5":"5","l":[3,4]}`,
-			mutateDig:   []string{"a"},
-			resultJSON:  `{"a":{"5":"5","l":[3,4]},"c":"d"}`,
+			source:      `{"a":{"somekey":"someval", "xxx":"yyy"},"c":"d"}`,
+			dig:         []string{"a"},
+			mutation:    `{"5":"5","l":[3,4]}`,
+			result:      `{"a":{"5":"5","l":[3,4]},"c":"d"}`,
 			checkDig:    [][]string{{"a", "l", "0"}, {"a", "l", "1"}},
 			checkValues: []int{3, 4},
 		},
 		{
-			sourceJSON:  `["a","b","c","d"]`,
-			mutateJSON:  `{"5":"5","l":[3,4]}`,
-			mutateDig:   []string{"0"},
-			resultJSON:  `[{"5":"5","l":[3,4]},"b","c","d"]`,
+			source:      `["a","b","c","d"]`,
+			dig:         []string{"0"},
+			mutation:    `{"5":"5","l":[3,4]}`,
+			result:      `[{"5":"5","l":[3,4]},"b","c","d"]`,
 			checkDig:    [][]string{{"0", "l", "0"}, {"0", "l", "1"}},
 			checkValues: []int{3, 4},
 		},
 		{
-			sourceJSON:  `["a","b","c","d"]`,
-			mutateJSON:  `{"5":"5","l":[3,4]}`,
-			mutateDig:   []string{"3"},
-			resultJSON:  `["a","b","c",{"5":"5","l":[3,4]}]`,
+			source:      `["a","b","c","d"]`,
+			dig:         []string{"3"},
+			mutation:    `{"5":"5","l":[3,4]}`,
+			result:      `["a","b","c",{"5":"5","l":[3,4]}]`,
 			checkDig:    [][]string{{"3", "l", "0"}, {"3", "l", "1"}},
 			checkValues: []int{3, 4},
 		},
 	}
 	for _, test := range tests {
-		node, err := DecodeBytes([]byte(test.sourceJSON))
+		node, err := DecodeString(test.source)
 		assert.Nil(t, err, "Error while decoding")
 
-		mutatingNode := node.Dig(test.mutateDig...)
-		mutatingNode.MutateToJSON(test.mutateJSON)
-		for i := range test.checkDig {
-			assert.Equal(t, test.checkValues[i], node.Dig(test.checkDig[i]...).AsInt(), "Wrong value")
-			assert.Equal(t, test.checkValues[i], mutatingNode.Dig(test.checkDig[i][1:]...).AsInt(), "Wrong value")
+		mutatingNode := node.Dig(test.dig...)
+		mutatingNode.MutateToJSON(test.mutation)
+		for i, dig := range test.checkDig {
+			assert.Equal(t, test.checkValues[i], node.Dig(dig...).AsInt(), "Wrong value")
+			if len(dig) > 1 {
+				assert.Equal(t, test.checkValues[i], mutatingNode.Dig(dig[1:]...).AsInt(), "Wrong value")
+			}
 		}
 
-		encoded := node.Encode()
-		assert.Equal(t, test.resultJSON, string(encoded), "Wrong result json")
+		encoded := node.EncodeToByte()
+		assert.Equal(t, test.result, string(encoded), "Wrong result json")
 	}
 }
 
@@ -615,14 +680,14 @@ func TestMutateToObject(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		node, err := DecodeBytes([]byte(test.sourceJSON))
+		node, err := DecodeString(test.sourceJSON)
 		assert.Nil(t, err, "Error while decoding")
 
 		mutatingNode := node.Dig(test.mutateDig...).MutateToObject()
 		assert.Equal(t, Object, mutatingNode.Type, "Wrong type")
 		assert.Equal(t, Object, node.Dig(test.mutateDig...).Type, "Wrong type")
 
-		encoded := node.Encode()
+		encoded := node.EncodeToByte()
 		assert.Equal(t, test.resultJSON, string(encoded), "Wrong result json")
 	}
 }
@@ -656,7 +721,7 @@ func TestMutateCollapse(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		node, err := DecodeBytes([]byte(test.sourceJSON))
+		node, err := DecodeString(test.sourceJSON)
 		assert.Nil(t, err, "Error while decoding")
 
 		mutatingNode := node.Dig(test.mutateDig...)
@@ -666,64 +731,64 @@ func TestMutateCollapse(t *testing.T) {
 			assert.Equal(t, test.checkValues[i], mutatingNode.Dig(test.checkDig[i][1:]...).AsInt(), "Wrong value")
 		}
 
-		encoded := node.Encode()
+		encoded := node.EncodeToByte()
 		assert.Equal(t, test.resultJSON, string(encoded), "Wrong result json")
 	}
 }
 
 func TestMutateToInt(t *testing.T) {
-	node, err := DecodeBytes([]byte(`{"a":"b"}`))
+	node, err := DecodeString(`{"a":"b"}`)
 	assert.Nil(t, err, "Error while decoding")
 
 	node.Dig("a").MutateToInt(5)
 	assert.Equal(t, 5, node.Dig("a").AsInt(), "Wrong value")
 
-	encoded := node.Encode()
+	encoded := node.EncodeToByte()
 	assert.Equal(t, `{"a":5}`, string(encoded), "Wrong result json")
 }
 
 func TestMutateToFloat(t *testing.T) {
-	node, err := DecodeBytes([]byte(`{"a":"b"}`))
+	node, err := DecodeString(`{"a":"b"}`)
 	assert.Nil(t, err, "Error while decoding")
 
 	node.Dig("a").MutateToFloat(5.6)
 	assert.Equal(t, 5.6, node.Dig("a").AsFloat(), "Wrong value")
 	assert.Equal(t, 6, node.Dig("a").AsInt(), "Wrong value")
 
-	encoded := node.Encode()
+	encoded := node.EncodeToByte()
 	assert.Equal(t, `{"a":5.6}`, string(encoded), "Wrong result json")
 }
 
 func TestMutateToString(t *testing.T) {
-	node, err := DecodeBytes([]byte(`{"a":"b"}`))
+	node, err := DecodeString(`{"a":"b"}`)
 	assert.Nil(t, err, "Error while decoding")
 
 	node.Dig("a").MutateToString("insane")
 	assert.Equal(t, "insane", node.Dig("a").AsString(), "Wrong value")
 
-	encoded := node.Encode()
+	encoded := node.EncodeToByte()
 	assert.Equal(t, `{"a":"insane"}`, string(encoded), "Wrong result json")
 }
 
 func TestMutateToField(t *testing.T) {
-	node, err := DecodeBytes([]byte(`{"a":"b"}`))
+	node, err := DecodeString(`{"a":"b"}`)
 	assert.Nil(t, err, "Error while decoding")
 
 	node.AsFields()[0].MutateToField("insane")
 	assert.Equal(t, "b", node.Dig("insane").AsString(), "Wrong value")
 
-	encoded := node.Encode()
+	encoded := node.EncodeToByte()
 	assert.Equal(t, `{"insane":"b"}`, string(encoded), "Wrong result json")
 }
 
 func TestAsField(t *testing.T) {
-	node, err := DecodeBytes([]byte(`{"a":"b"}`))
+	node, err := DecodeString(`{"a":"b"}`)
 	assert.Nil(t, err, "Error while decoding")
 
 	node.AsField("a").MutateToField("insane")
 	assert.Equal(t, "b", node.Dig("insane").AsString(), "Wrong value")
 
-	encoded := node.Encode()
+	encoded := node.EncodeToByte()
 	assert.Equal(t, `{"insane":"b"}`, string(encoded), "Wrong result json")
 }
 
@@ -763,7 +828,7 @@ func TestObjectManyFieldsSuicide(t *testing.T) {
 		assert.Nil(t, root.Dig(field), "node should'n be findable")
 	}
 
-	assert.Equal(t, `{}`, string(root.Encode()), "Wrong result json")
+	assert.Equal(t, `{}`, string(root.EncodeToByte()), "Wrong result json")
 }
 
 func TestObjectManyFieldsAddSuicide(t *testing.T) {
@@ -791,7 +856,7 @@ func TestObjectManyFieldsAddSuicide(t *testing.T) {
 		assert.Nil(t, node.Dig(strconv.Itoa(i), "node should be findable"))
 	}
 
-	assert.Equal(t, `{}`, string(node.Encode()), "wrong result json")
+	assert.Equal(t, `{}`, string(node.EncodeToByte()), "wrong result json")
 }
 
 func TestObjectFields(t *testing.T) {

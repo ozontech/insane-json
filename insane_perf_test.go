@@ -138,7 +138,7 @@ func BenchmarkFair(b *testing.B) {
 				root := Spawn()
 				for i := 0; i < b.N; i++ {
 					for _, json := range jsons {
-						_ = DecodeBytesReusing(root, json)
+						_ = root.DecodeBytes(json)
 						for j := 0; j < reqCount; j++ {
 							for _, f := range fields {
 								for _, ff := range f {
@@ -146,7 +146,7 @@ func BenchmarkFair(b *testing.B) {
 								}
 							}
 						}
-						s = root.EncodeNoAlloc(s[:0])
+						s = root.Encode(s[:0])
 					}
 				}
 				Release(root)
@@ -157,7 +157,7 @@ func BenchmarkFair(b *testing.B) {
 			fn: func(b *testing.B, jsons [][]byte, fields [][][]string, reqCount int) {
 				root := Spawn()
 				for _, json := range jsons {
-					_ = DecodeBytesReusing(root, json)
+					_ = root.DecodeBytes(json)
 					for j := 0; j < reqCount; j++ {
 						for _, f := range fields {
 							for _, ff := range f {

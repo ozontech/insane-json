@@ -43,6 +43,8 @@ const (
 type Type int
 
 var (
+	StartNodePoolSize = 16
+
 	decoderPool      = make([]*decoder, 0, 16)
 	decoderPoolIndex = -1
 	decoderPoolMu    = &sync.Mutex{}
@@ -63,6 +65,7 @@ var (
 	ErrExpectedComma                = errors.New("expected comma")
 
 	// api errors
+	ErrRootIsNil = errors.New("root is nil")
 	ErrNotFound  = errors.New("node isn't found")
 	ErrNotObject = errors.New("node isn't an object")
 	ErrNotArray  = errors.New("node isn't an array")
@@ -123,6 +126,33 @@ type decoder struct {
 	root     Root
 	nodePool []*Node
 	nodes    int
+}
+
+// ReleaseMem sends node pool and internal buffer to GC
+// useful to reduce memory usage after decoding big JSON
+func (r *Root) ReleaseMem() {
+	r.ReleasePoolMem()
+	r.ReleaseBufMem()
+}
+
+// ReleasePoolMem sends node pool to GC
+func (r *Root) ReleasePoolMem() {
+	r.data.decoder.initPool()
+}
+
+// ReleasePoolMem sends internal buffer to GC
+func (r *Root) ReleaseBufMem() {
+	r.data.decoder.json = make([]byte, 0, 0)
+}
+
+// BuffCap returns current size of internal buffer
+func (r *Root) BuffCap() int {
+	return cap(r.data.decoder.json)
+}
+
+// PullSize returns current size of node pool
+func (r *Root) PullSize() int {
+	return len(r.data.decoder.nodePool)
 }
 
 // ******************** //
@@ -497,18 +527,25 @@ func (d *decoder) decodeHeadless(json string, isPooled bool) (*Root, error) {
 	return &d.root, nil
 }
 
-// EncodeNoAlloc legendary insane encode function
-// allocates new byte buffer on every call
-// use EncodeNoAlloc to reuse already created buffer and gain more performance
-func (n *Node) Encode() []byte {
-	return n.EncodeNoAlloc([]byte{})
+// EncodeToByte legendary insane encode function
+// slow because it allocates new byte buffer on every call
+// use Encode to reuse already created buffer and gain more performance
+func (n *Node) EncodeToByte() []byte {
+	return n.Encode([]byte{})
 }
 
-// EncodeNoAlloc legendary insane encode function
+// EncodeToString legendary insane encode function
+// slow because it allocates new string on every call
+// use Encode to reuse already created buffer and gain more performance
+func (n *Node) EncodeToString() string {
+	return toString(n.Encode([]byte{}))
+}
+
+// Encode legendary insane encode function
 // uses already created byte buffer to place json data so
 // mem allocations may occur only if buffer isn't long enough
 // use it for performance
-func (n *Node) EncodeNoAlloc(out []byte) []byte {
+func (n *Node) Encode(out []byte) []byte {
 	out = out[:0]
 	s := 0
 	curNode := n
@@ -1008,45 +1045,73 @@ func (n *Node) findSelf() int {
 //      MUTATIONS       //
 // ******************** //
 
-func (n *Node) MutateToJSON(json string) *Node {
-	if n == nil {
+func (n *Node) MergeWith(node *Node) *Node {
+	if n == nil || node == nil {
 		return n
 	}
-	owner := n.parent
-	if owner == nil {
+	if !n.IsObject() || !node.IsObject() {
 		return n
 	}
 
-	root, err := n.data.decoder.decode(json, false)
-	if err != nil {
+	for _, child := range node.data.values {
+		child.unescapeField()
+		childField := child.AsString()
+		x := n.AddField(childField)
+		x.MutateToNode(child.next)
+	}
+
+	return n
+}
+
+// MutateToNode it isn't safe function, if you create node cycle, encode() may freeze
+func (n *Node) MutateToNode(node *Node) *Node {
+	if n == nil || node == nil {
 		return n
 	}
-	end := root.data.end
+
 	n.tryDropLinks()
 
-	index := n.actualizeIndex()
-
-	end.parent = n
-	if index != len(owner.data.values)-1 {
-		end.next = owner.data.values[index+1]
-	} else {
-		end.next = owner.data.end
+	curNext := n.next
+	if n.Type == Object || n.Type == Array {
+		curNext = n.data.end.next
 	}
 
-	n.Type = root.Type
-	n.next = root.next
-	n.value = root.value
-	n.data.end = root.data.end
-	n.data.flags = root.data.flags
-	n.data.values = append(n.data.values[:0], root.data.values...)
-	for _, node := range root.data.values {
-		node.parent = n
-		if root.Type == Object {
-			node.next.parent = n
+	if node.Type == Object || node.Type == Array {
+		node.data.end.next = curNext
+	} else {
+		node.next = curNext
+	}
+
+	n.Type = node.Type
+	n.value = node.value
+	if node.Type == Object || node.Type == Array {
+		n.next = node.next
+		n.data.end = node.data.end
+		n.data.end.parent = n.parent
+		n.data.flags &= ^FlagFieldMap // reset field mapping
+		n.data.values = append(n.data.values[:0], node.data.values...)
+		for _, child := range node.data.values {
+			child.parent = n
+			if node.Type == Object {
+				child.next.parent = n
+			}
 		}
 	}
 
 	return n
+}
+
+func (n *Node) MutateToJSON(json string) *Node {
+	if n == nil {
+		return n
+	}
+
+	node, err := n.data.decoder.decode(json, false)
+	if err != nil {
+		return n
+	}
+
+	return n.MutateToNode(node)
 }
 
 func (n *Node) MutateToField(value string) *Node {
@@ -1255,6 +1320,10 @@ func (n *Node) unescapeStr() {
 }
 
 func (n *Node) unescapeField() {
+	if n.Type == Field {
+		return
+	}
+
 	value := n.value
 	i := strings.LastIndexByte(value, '"')
 	n.value = unescapeStr(value[1:i])
@@ -1287,6 +1356,19 @@ func (n *Node) AsString() string {
 	default:
 		return ""
 	}
+}
+
+func (n *Node) AsBytes() []byte {
+	return toByte(n.AsString())
+}
+
+func (n *StrictNode) AsBytes() ([]byte, error) {
+	s, err := n.AsString()
+	if err != nil {
+		return nil, err
+	}
+
+	return toByte(s), nil
 }
 
 func (n *StrictNode) AsString() (string, error) {
@@ -1501,9 +1583,8 @@ func (n *Node) InStrictMode() *StrictNode {
 // ******************** //
 
 func (d *decoder) initPool() {
-	l := 1024
-	d.nodePool = make([]*Node, l, l)
-	for i := 0; i < l; i++ {
+	d.nodePool = make([]*Node, StartNodePoolSize, StartNodePoolSize)
+	for i := 0; i < StartNodePoolSize; i++ {
 		d.nodePool[i] = &Node{data: &data{decoder: d}}
 	}
 }
@@ -1557,16 +1638,44 @@ func DecodeString(json string) (*Root, error) {
 	return Spawn().data.decoder.decodeHeadless(json, true)
 }
 
-func DecodeBytesReusing(root *Root, jsonBytes []byte) error {
-	_, err := root.data.decoder.decodeHeadless(toString(jsonBytes), false)
+// DecodeBytes clear root and decode new JSON
+// useful for reusing root to decode multiple times and reduce allocations
+func (r *Root) DecodeBytes(jsonBytes []byte) error {
+	if r == nil {
+		return ErrRootIsNil
+	}
+	_, err := r.data.decoder.decodeHeadless(toString(jsonBytes), false)
 
 	return err
 }
 
-func DecodeStringReusing(root *Root, json string) error {
-	_, err := root.data.decoder.decodeHeadless(json, false)
+// DecodeString clear root and decode new JSON
+// useful for reusing root to decode multiple times and reduce allocations
+func (r *Root) DecodeString(json string) error {
+	if r == nil {
+		return ErrRootIsNil
+	}
+	_, err := r.data.decoder.decodeHeadless(json, false)
 
 	return err
+}
+
+// DecodeBytesAdditional doesn't clean root, uses root's node pool to decode JSON
+func (r *Root) DecodeBytesAdditional(jsonBytes []byte) (*Node, error) {
+	if r == nil {
+		return nil, ErrRootIsNil
+	}
+
+	return r.data.decoder.decode(toString(jsonBytes), false)
+}
+
+// DecodeStringAdditional doesn't clean root, uses root's node pool to decode JSON
+func (r *Root) DecodeStringAdditional(json string) (*Node, error) {
+	if r == nil {
+		return nil, ErrRootIsNil
+	}
+
+	return r.data.decoder.decode(json, false)
 }
 
 func Release(root *Root) {
@@ -1930,7 +2039,7 @@ var out = make([]byte, 0, 0)
 var root = Spawn()
 
 func Fuzz(data []byte) int {
-	err := DecodeBytesReusing(root, data)
+	err := root.DecodeBytes(data)
 	if err != nil {
 		return -1
 	}
@@ -2009,7 +2118,7 @@ func Fuzz(data []byte) int {
 		}
 	}
 
-	root.EncodeNoAlloc(out)
+	root.Encode(out)
 
 	return 1
 }
