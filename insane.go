@@ -2,6 +2,7 @@ package insaneJSON
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"math/rand"
 	"reflect"
@@ -172,7 +173,7 @@ func (d *decoder) decode(json string, shouldReset bool) (*Node, error) {
 
 	l := len(json)
 	if l == 0 {
-		return nil, ErrEmptyJSON
+		return nil, insaneErr(ErrEmptyJSON, json, o)
 	}
 
 	nodePool := d.nodePool
@@ -190,7 +191,7 @@ func (d *decoder) decode(json string, shouldReset bool) (*Node, error) {
 	goto decode
 decodeObject:
 	if o == l {
-		return nil, ErrUnexpectedJSONEnding
+		return nil, insaneErr(ErrUnexpectedJSONEnding, json, o)
 	}
 
 	// skip wc
@@ -223,15 +224,15 @@ decodeObject:
 
 	if c != ',' {
 		if len(topNode.data.values) > 0 {
-			return nil, ErrExpectedComma
+			return nil, insaneErr(ErrExpectedComma, json, o)
 		}
 		o--
 	} else {
 		if len(topNode.data.values) == 0 {
-			return nil, ErrExpectedObjectField
+			return nil, insaneErr(ErrExpectedObjectField, json, o)
 		}
 		if o == l {
-			return nil, ErrUnexpectedJSONEnding
+			return nil, insaneErr(ErrUnexpectedJSONEnding, json, o)
 		}
 	}
 
@@ -250,7 +251,7 @@ decodeObject:
 	}
 
 	if c != '"' {
-		return nil, ErrExpectedObjectField
+		return nil, insaneErr(ErrExpectedObjectField, json, o)
 	}
 
 	t = o - 1
@@ -258,14 +259,15 @@ decodeObject:
 		x = strings.IndexByte(json[o:], '"')
 		o += x + 1
 		if x < 0 {
-			return nil, ErrUnexpectedEndOfObjectField
+			return nil, insaneErr(ErrUnexpectedEndOfObjectField, json, o)
 		}
-		if x == 0 || json[o-2] != '\\' {
+
+		if x == 0 || json[o-2] != '\\' || (json[o-2] == '\\' && json[o-3] == '\\') {
 			break
 		}
 	}
 	if o == l {
-		return nil, ErrExpectedObjectFieldSeparator
+		return nil, insaneErr(ErrExpectedObjectFieldSeparator, json, o)
 	}
 
 	curNode.next = nodePool[nodes]
@@ -287,10 +289,10 @@ decodeObject:
 	}
 
 	if c != ':' {
-		return nil, ErrExpectedObjectFieldSeparator
+		return nil, insaneErr(ErrExpectedObjectFieldSeparator, json, o)
 	}
 	if o == l {
-		return nil, ErrExpectedValue
+		return nil, insaneErr(ErrExpectedValue, json, o)
 	}
 	curNode.Type = escapedField
 	curNode.value = json[t:o]
@@ -300,7 +302,7 @@ decodeObject:
 	goto decode
 decodeArray:
 	if o == l {
-		return nil, ErrUnexpectedJSONEnding
+		return nil, insaneErr(ErrUnexpectedJSONEnding, json, o)
 	}
 	// skip wc
 	c = json[o]
@@ -332,15 +334,15 @@ decodeArray:
 
 	if c != ',' {
 		if len(topNode.data.values) > 0 {
-			return nil, ErrExpectedComma
+			return nil, insaneErr(ErrExpectedComma, json, o)
 		}
 		o--
 	} else {
 		if len(topNode.data.values) == 0 {
-			return nil, ErrExpectedValue
+			return nil, insaneErr(ErrExpectedValue, json, o)
 		}
 		if o == l {
-			return nil, ErrUnexpectedJSONEnding
+			return nil, insaneErr(ErrUnexpectedJSONEnding, json, o)
 		}
 	}
 
@@ -366,7 +368,7 @@ decode:
 	switch c {
 	case '{':
 		if o == l {
-			return nil, ErrExpectedObjectField
+			return nil, insaneErr(ErrExpectedObjectField, json, o)
 		}
 
 		curNode.next = nodePool[nodes]
@@ -383,7 +385,7 @@ decode:
 		goto decodeObject
 	case '[':
 		if o == l {
-			return nil, ErrExpectedValue
+			return nil, insaneErr(ErrExpectedValue, json, o)
 		}
 		curNode.next = nodePool[nodes]
 		curNode = curNode.next
@@ -402,9 +404,9 @@ decode:
 			x := strings.IndexByte(json[t:], '"')
 			t += x + 1
 			if x < 0 {
-				return nil, ErrUnexpectedEndOfString
+				return nil, insaneErr(ErrUnexpectedEndOfString, json, o)
 			}
-			if x == 0 || json[t-2] != '\\' {
+			if x == 0 || json[t-2] != '\\' || (json[t-2] == '\\' && json[t-3] == '\\') {
 				break
 			}
 		}
@@ -422,7 +424,7 @@ decode:
 		o = t
 	case 't':
 		if len(json) < o+3 || json[o:o+3] != "rue" {
-			return nil, ErrUnexpectedEndOfTrue
+			return nil, insaneErr(ErrUnexpectedEndOfTrue, json, o)
 		}
 		o += 3
 
@@ -436,7 +438,7 @@ decode:
 
 	case 'f':
 		if len(json) < o+4 || json[o:o+4] != "alse" {
-			return nil, ErrUnexpectedEndOfFalse
+			return nil, insaneErr(ErrUnexpectedEndOfFalse, json, o)
 		}
 		o += 4
 
@@ -450,7 +452,7 @@ decode:
 
 	case 'n':
 		if len(json) < o+3 || json[o:o+3] != "ull" {
-			return nil, ErrUnexpectedEndOfNull
+			return nil, insaneErr(ErrUnexpectedEndOfNull, json, o)
 		}
 		o += 3
 
@@ -467,7 +469,7 @@ decode:
 		for ; o != l && ((json[o] >= '0' && json[o] <= '9') || numbersMap[json[o]] == 1); o++ {
 		}
 		if t == o {
-			return nil, ErrExpectedValue
+			return nil, insaneErr(ErrExpectedValue, json, o)
 		}
 
 		curNode.next = nodePool[nodes]
@@ -509,7 +511,7 @@ exit:
 		}
 
 		if o != l {
-			return nil, ErrUnexpectedJSONEnding
+			return nil, insaneErr(ErrUnexpectedJSONEnding, json, o)
 		}
 	}
 
@@ -747,7 +749,7 @@ getArray:
 	goto get
 }
 
-func (d *decoder) getNode() (*Node) {
+func (d *decoder) getNode() *Node {
 	node := d.nodePool[d.nodes]
 	d.nodes++
 	if d.nodes > len(d.nodePool)-16 {
@@ -2133,4 +2135,32 @@ func Fuzz(data []byte) int {
 	root.Encode(out)
 
 	return 1
+}
+
+func insaneErr(err error, json string, offset int) error {
+	a := offset - 20
+	b := offset + 20
+	if a < 0 {
+		a = 0
+	}
+	if b > len(json)-1 {
+		b = len(json) - 1
+		if b < 0 {
+			b = 0
+		}
+	}
+
+	pointer := ""
+	for x := 0; x < offset-a+len(err.Error())+len(" near "); x++ {
+		pointer += " "
+	}
+	pointer += "^"
+	str := ""
+	if a != b {
+		str = strings.ReplaceAll(json[a:b], "\n", " ")
+	}
+	str = strings.ReplaceAll(str, "\r", " ")
+	str = strings.ReplaceAll(str, "\t", " ")
+
+	return errors.New(fmt.Sprintf("%s near `%s`\n%s", err.Error(), str, pointer))
 }
