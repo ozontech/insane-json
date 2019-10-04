@@ -39,13 +39,13 @@ func TestDecodeAdditional(t *testing.T) {
 	assert.NotNil(t, root, "Node is nil")
 	assert.Nil(t, err, "Error while decoding")
 
-	jsonB := `{"additional":"ok"}`
+	jsonB := `[0, 1, 2]`
 	node, err := root.DecodeStringAdditional(jsonB)
 	assert.NotNil(t, node, "Node is nil")
 	assert.Nil(t, err, "Error while decoding")
 
 	assert.Equal(t, jsonA, root.EncodeToString(), "Wrong first node")
-	assert.Equal(t, "ok", node.Dig("additional").AsString(), "Wrong value")
+	assert.Equal(t, 1, node.Dig("1").AsInt(), "Wrong value")
 }
 
 func TestDecodeManyObjects(t *testing.T) {
@@ -510,37 +510,37 @@ func TestObjectSuicide(t *testing.T) {
 	}
 }
 
-//func TestMergeWith(t *testing.T) {
-//	jsonA := `{"1":"1","2":"2"}`
-//	root, err := DecodeString(jsonA)
-//	assert.NotNil(t, root, "Node is nil")
-//	assert.Nil(t, err, "Error while decoding")
-//
-//	jsonB := `{"1":"1","3":"3","4":"4"}`
-//	node, err := root.DecodeStringAdditional(jsonB)
-//	assert.Nil(t, err, "Error while decoding")
-//	assert.NotNil(t, node, "Node is nil")
-//
-//	root.MergeWith(node)
-//
-//	assert.Equal(t, `{"1":"1","2":"2","3":"3","4":"4"}`, root.EncodeToString(), "Wrong first node")
-//}
+func TestMergeWith(t *testing.T) {
+	jsonA := `{"1":"1","2":"2"}`
+	root, err := DecodeString(jsonA)
+	assert.NotNil(t, root, "Node is nil")
+	assert.Nil(t, err, "Error while decoding")
 
-//func TestMergeWithComplex(t *testing.T) {
-//	jsonA := `{"1":{"1":"1"}}`
-//	root, err := DecodeString(jsonA)
-//	assert.NotNil(t, root, "Node is nil")
-//	assert.Nil(t, err, "Error while decoding")
-//
-//	jsonB := `{"1":1,"2":{"2":"2"}}`
-//	node, err := root.DecodeStringAdditional(jsonB)
-//	assert.Nil(t, err, "Error while decoding")
-//	assert.NotNil(t, node, "Node is nil")
-//
-//	root.MergeWith(node)
-//
-//	assert.Equal(t, `{"1":1,"2":{"2":"2"}}`, root.EncodeToString(), "Wrong first node")
-//}
+	jsonB := `{"1":"1","3":"3","4":"4"}`
+	node, err := root.DecodeStringAdditional(jsonB)
+	assert.Nil(t, err, "Error while decoding")
+	assert.NotNil(t, node, "Node is nil")
+
+	root.MergeWith(node)
+
+	assert.Equal(t, `{"1":"1","2":"2","3":"3","4":"4"}`, root.EncodeToString(), "Wrong first node")
+}
+
+func TestMergeWithComplex(t *testing.T) {
+	jsonA := `{"1":{"1":"1"}}`
+	root, err := DecodeString(jsonA)
+	assert.NotNil(t, root, "Node is nil")
+	assert.Nil(t, err, "Error while decoding")
+
+	jsonB := `{"1":1,"2":{"2":"2"}}`
+	node, err := root.DecodeStringAdditional(jsonB)
+	assert.Nil(t, err, "Error while decoding")
+	assert.NotNil(t, node, "Node is nil")
+
+	root.MergeWith(node)
+
+	assert.Equal(t, `{"1":1,"2":{"2":"2"}}`, root.EncodeToString(), "Wrong first node")
+}
 
 func TestMutateToJSON(t *testing.T) {
 	tests := []struct {

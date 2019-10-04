@@ -176,6 +176,7 @@ func (d *decoder) decode(json string, shouldReset bool) (*Node, error) {
 	}
 
 	nodePool := d.nodePool
+	nodePoolLen := len(nodePool)
 	nodes := d.nodes
 
 	root := nodePool[nodes]
@@ -345,8 +346,9 @@ decodeArray:
 
 	topNode.data.values = append(topNode.data.values, nodePool[nodes])
 decode:
-	if nodes > len(nodePool)-16 {
+	if nodes > nodePoolLen-16 {
 		nodePool = d.expandPool()
+		nodePoolLen = len(nodePool)
 	}
 	// skip wc
 	c = json[o]
@@ -480,6 +482,11 @@ decode:
 pop:
 	if topNode == nil {
 		goto exit
+	}
+
+	if nodes > nodePoolLen-16 {
+		nodePool = d.expandPool()
+		nodePoolLen = len(nodePool)
 	}
 
 	if topNode.Type == Object {
@@ -740,6 +747,16 @@ getArray:
 	goto get
 }
 
+func (d *decoder) getNode() (*Node) {
+	node := d.nodePool[d.nodes]
+	d.nodes++
+	if d.nodes > len(d.nodePool)-16 {
+		d.expandPool()
+	}
+
+	return node
+}
+
 func (n *Node) DigStrict(path ...string) (*StrictNode, error) {
 	result := n.Dig(path...)
 	if result == nil {
@@ -761,15 +778,13 @@ func (n *Node) AddField(name string) *Node {
 
 	decoder := n.data.decoder
 
-	newNull := decoder.nodePool[decoder.nodes]
-	decoder.nodes++
+	newNull := decoder.getNode()
 	newNull.Type = Null
 	newNull.next = n.data.end
 	newNull.data.decoder = decoder
 	newNull.parent = n
 
-	newField := decoder.nodePool[decoder.nodes]
-	decoder.nodes++
+	newField := decoder.getNode()
 	newField.Type = Field
 	newField.next = newNull
 	newField.data.decoder = decoder
@@ -802,8 +817,7 @@ func (n *Node) AppendElement() *Node {
 
 	decoder := n.data.decoder
 
-	newNull := decoder.nodePool[decoder.nodes]
-	decoder.nodes++
+	newNull := decoder.getNode()
 	newNull.Type = Null
 	newNull.next = n.data.end
 	newNull.data.decoder = decoder
@@ -844,8 +858,7 @@ func (n *Node) InsertElement(pos int) *Node {
 
 	decoder := n.data.decoder
 
-	newNull := decoder.nodePool[decoder.nodes]
-	decoder.nodes++
+	newNull := decoder.getNode()
 	newNull.Type = Null
 	newNull.next = n.data.end
 	newNull.data.decoder = decoder
@@ -986,9 +999,9 @@ func (n *Node) tryDropLinks() {
 		return
 	}
 
-	next := n.parent.data.values[index+1]
-	if index == len(n.parent.data.values)-1 {
-		next = n.parent.data.end
+	next := n.parent.data.end
+	if index != len(n.parent.data.values)-1 {
+		next = n.parent.data.values[index+1]
 	}
 
 	n.next = next
@@ -1208,8 +1221,7 @@ func (n *Node) MutateToObject() *Node {
 
 	decoder := n.data.decoder
 
-	objEnd := decoder.nodePool[decoder.nodes]
-	decoder.nodes++
+	objEnd := decoder.getNode()
 	objEnd.Type = objectEnd
 	objEnd.next = n.next
 	objEnd.data.decoder = decoder
