@@ -33,6 +33,16 @@ func TestDecodeQuote(t *testing.T) {
 	assert.Equal(t, Object, root.Type, "wrong first node")
 }
 
+func TestDecodeQuoteTriple(t *testing.T) {
+	json := `{"log":"{\"ts\":\"2019-10-04T15:54:22.312412503Z\",\"service\":\"oms-go-broker\",\"message\":\"\\u003e0\\\"","stream":"stdout","time":"2019-10-04T15:54:22.313584867Z"}`
+	root, err := DecodeString(json)
+	defer Release(root)
+
+	assert.NoError(t, err, "error while decoding")
+	assert.NotNil(t, root, "node shouldn't be nil")
+	assert.Equal(t, Object, root.Type, "wrong first node")
+}
+
 func TestDecodeReusing(t *testing.T) {
 	json := `{"_id":"5d53006246df0b962b787d11","index":"0","guid":"80d75945-6251-46a2-b6c9-a10094beed6e","isActive":"false","balance":"$2,258.24","picture":"http://placehold.it/32x32","age":"34","eyeColor":"brown","company":"NIMON","email":"anne.everett@nimon.name","phone":"+1(946)560-2227","address":"815EmpireBoulevard,Blue,Nevada,5617","about":"Proidentoccaecateulaborislaboreofficialaborumvelitanimnulla.Laboreametoccaecataliquaminimlaboreadenimdolorelaborum.Eiusmodesseeiusmodaliquacillumullamcodonisivelitesseincididunt.Ininestessereprehenderitirureaniminsit.","registered":"Friday,May27,20165:05AM","latitude":"-5.922381","longitude":"-49.143968","greeting":"Hello,Anne!Youhave7unreadmessages.","favoriteFruit":"banana"}`
 	root := Spawn()

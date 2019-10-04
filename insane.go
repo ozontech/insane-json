@@ -262,9 +262,19 @@ decodeObject:
 			return nil, insaneErr(ErrUnexpectedEndOfObjectField, json, o)
 		}
 
-		if x == 0 || json[o-2] != '\\' || (json[o-2] == '\\' && json[o-3] == '\\') {
+		if x == 0 || json[o-2] != '\\' {
 			break
 		}
+
+		// untangle fucking escaping hell
+		z := o - 3
+		for json[z] == '\\' {
+			z--
+		}
+		if (o-z)%2 == 0 {
+			break
+		}
+
 	}
 	if o == l {
 		return nil, insaneErr(ErrExpectedObjectFieldSeparator, json, o)
@@ -406,7 +416,16 @@ decode:
 			if x < 0 {
 				return nil, insaneErr(ErrUnexpectedEndOfString, json, o)
 			}
-			if x == 0 || json[t-2] != '\\' || (json[t-2] == '\\' && json[t-3] == '\\') {
+			if x == 0 || json[t-2] != '\\' {
+				break
+			}
+
+			// untangle fucking escaping hell
+			z := t - 3
+			for json[z] == '\\' {
+				z--
+			}
+			if (t-z)%2 == 0 {
 				break
 			}
 		}
