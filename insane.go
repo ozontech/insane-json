@@ -45,6 +45,7 @@ type Type int
 
 var (
 	StartNodePoolSize = 16
+	MapUseThreshold   = 18
 
 	decoderPool      = make([]*decoder, 0, 16)
 	decoderPoolIndex = -1
@@ -436,7 +437,6 @@ decode:
 
 		curNode.Type = escapedString
 		curNode.value = json[o-1 : t]
-		curNode.data.flags = 0
 		curNode.data.dirtySeq = -1
 		curNode.parent = topNode
 
@@ -691,7 +691,7 @@ get:
 		goto getArray
 	}
 
-	if node.data.flags&FlagFieldMap != FlagFieldMap && len(node.data.values) > 18 {
+	if node.data.flags&FlagFieldMap != FlagFieldMap && len(node.data.values) > MapUseThreshold {
 		m := node.data.fields
 		if m == nil {
 			node.data.fields = make(map[string]int, len(node.data.values))
@@ -963,16 +963,16 @@ func (n *Node) Suicide() {
 			owner.next = owner.data.end
 		}
 
-		nend := n
+		end := n
 		if n.Type == Object || n.Type == Array {
-			nend = n.data.end
+			end = n.data.end
 		}
 
-		if movingField != nend.next {
+		if movingField != end.next {
 			if movingField.next.Type == Object || movingField.next.Type == Array {
-				movingField.next.data.end.next = nend.next
+				movingField.next.data.end.next = end.next
 			} else {
-				movingField.next.next = nend.next
+				movingField.next.next = end.next
 			}
 		}
 
@@ -1145,18 +1145,31 @@ func (n *Node) MutateToJSON(json string) *Node {
 	return n.MutateToNode(node)
 }
 
-func (n *Node) MutateToField(value string) *Node {
-	if n.Type != Field {
+// MutateToField changes name of object's field
+// works only with Field nodes received by AsField()/AsFields()
+// example:
+// root, err := insaneJSON.DecodeString(`{"a":"a","b":"b"}`)
+// root.AsField("a").MutateToField("new_name")
+// root.Encode() will be {"new_name":"a","b":"b"}
+func (n *Node) MutateToField(newFieldName string) *Node {
+	if n == nil || n.Type != Field {
 		return n
 	}
 
-	n.value = value
+	parent := n.parent
+	if parent.data.flags&FlagFieldMap == FlagFieldMap {
+		x := parent.data.fields[n.value]
+		delete(parent.data.fields, n.value)
+		parent.data.fields[newFieldName] = x
+	}
+
+	n.value = newFieldName
 
 	return n
 }
 
 func (n *Node) MutateToInt(value int) *Node {
-	if n.Type == Field {
+	if n == nil || n.Type == Field {
 		return n
 	}
 	n.tryDropLinks()
@@ -1168,7 +1181,7 @@ func (n *Node) MutateToInt(value int) *Node {
 }
 
 func (n *Node) MutateToFloat(value float64) *Node {
-	if n.Type == Field {
+	if n == nil || n.Type == Field {
 		return n
 	}
 	n.tryDropLinks()
@@ -1180,7 +1193,7 @@ func (n *Node) MutateToFloat(value float64) *Node {
 }
 
 func (n *Node) MutateToBool(value bool) *Node {
-	if n.Type == Field {
+	if n == nil || n.Type == Field {
 		return n
 	}
 	n.tryDropLinks()
@@ -1195,7 +1208,7 @@ func (n *Node) MutateToBool(value bool) *Node {
 }
 
 func (n *Node) MutateToNull(value bool) *Node {
-	if n.Type == Field {
+	if n == nil || n.Type == Field {
 		return n
 	}
 	n.tryDropLinks()
@@ -1206,7 +1219,7 @@ func (n *Node) MutateToNull(value bool) *Node {
 }
 
 func (n *Node) MutateToString(value string) *Node {
-	if n.Type == Field {
+	if n == nil || n.Type == Field {
 		return nil
 	}
 	n.tryDropLinks()
@@ -1218,7 +1231,7 @@ func (n *Node) MutateToString(value string) *Node {
 }
 
 func (n *Node) MutateToEscapedString(value string) *Node {
-	if n.Type == Field {
+	if n == nil || n.Type == Field {
 		return nil
 	}
 	n.tryDropLinks()
@@ -1230,7 +1243,7 @@ func (n *Node) MutateToEscapedString(value string) *Node {
 }
 
 func (n *Node) MutateToObject() *Node {
-	if n.Type == Field {
+	if n == nil || n.Type == Field {
 		return n
 	}
 	n.tryDropLinks()
