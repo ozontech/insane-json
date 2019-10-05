@@ -114,7 +114,7 @@ type data struct {
 	index    int
 	flags    int
 	dirtySeq int
-	fields   *map[string]int
+	fields   map[string]int
 	err      *StrictNode
 	decoder  *decoder
 }
@@ -692,12 +692,13 @@ get:
 	}
 
 	if node.data.flags&FlagFieldMap != FlagFieldMap && len(node.data.values) > 18 {
-		if node.data.fields == nil {
-			fields := make(map[string]int, len(node.data.values))
-			node.data.fields = &fields
+		m := node.data.fields
+		if m == nil {
+			node.data.fields = make(map[string]int, len(node.data.values))
+			m = node.data.fields
 		} else {
-			for field := range *node.data.fields {
-				delete(*node.data.fields, field)
+			for field := range m {
+				delete(m, field)
 			}
 		}
 
@@ -705,13 +706,13 @@ get:
 			if field.Type == escapedField {
 				field.unescapeField()
 			}
-			(*node.data.fields)[field.value] = index
+			m[field.value] = index
 		}
 		node.data.flags |= FlagFieldMap
 	}
 
 	if node.data.flags&FlagFieldMap == FlagFieldMap {
-		index, has := (*node.data.fields)[pathField]
+		index, has := node.data.fields[pathField]
 		if !has {
 			return nil
 		}
@@ -802,13 +803,11 @@ func (n *Node) AddField(name string) *Node {
 	newNull := decoder.getNode()
 	newNull.Type = Null
 	newNull.next = n.data.end
-	newNull.data.decoder = decoder
 	newNull.parent = n
 
 	newField := decoder.getNode()
 	newField.Type = Field
 	newField.next = newNull
-	newField.data.decoder = decoder
 	newField.parent = n
 	newField.value = name
 
@@ -825,7 +824,7 @@ func (n *Node) AddField(name string) *Node {
 	n.data.values = append(n.data.values, newField)
 
 	if n.data.flags&FlagFieldMap == FlagFieldMap {
-		(*n.data.fields)[name] = l
+		n.data.fields[name] = l
 	}
 
 	return newNull
@@ -841,7 +840,6 @@ func (n *Node) AppendElement() *Node {
 	newNull := decoder.getNode()
 	newNull.Type = Null
 	newNull.next = n.data.end
-	newNull.data.decoder = decoder
 	newNull.parent = n
 
 	l := len(n.data.values)
@@ -882,7 +880,6 @@ func (n *Node) InsertElement(pos int) *Node {
 	newNull := decoder.getNode()
 	newNull.Type = Null
 	newNull.next = n.data.end
-	newNull.data.decoder = decoder
 	newNull.parent = n
 
 	prev.next = newNull
@@ -934,7 +931,7 @@ func (n *Node) Suicide() {
 			owner.data.values = owner.data.values[:0]
 
 			if owner.data.flags&FlagFieldMap == FlagFieldMap {
-				delete(*owner.data.fields, deletingField.value)
+				delete(owner.data.fields, deletingField.value)
 			}
 
 			return
@@ -980,9 +977,9 @@ func (n *Node) Suicide() {
 		}
 
 		if owner.data.flags&FlagFieldMap == FlagFieldMap {
-			delete(*owner.data.fields, deletingField.value)
+			delete(owner.data.fields, deletingField.value)
 			if workingIndex != lastIndex {
-				(*owner.data.fields)[movingField.value] = workingIndex
+				(owner.data.fields)[movingField.value] = workingIndex
 			}
 		}
 	case Array:
@@ -1245,7 +1242,6 @@ func (n *Node) MutateToObject() *Node {
 	objEnd := decoder.getNode()
 	objEnd.Type = objectEnd
 	objEnd.next = n.next
-	objEnd.data.decoder = decoder
 	objEnd.parent = n
 
 	n.next = objEnd
