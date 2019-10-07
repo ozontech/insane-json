@@ -88,7 +88,7 @@ func getChaoticWorkload() ([][]byte, [][][]string, int64) {
 			node := root.Node
 			selector := make([]string, 0, 0)
 			for {
-				if node.Type != Object {
+				if !node.IsObject() {
 					break
 				}
 
@@ -247,7 +247,6 @@ func BenchmarkValueDecodeInt(b *testing.B) {
 			decodeInt64(test.s)
 		}
 	}
-
 }
 
 func BenchmarkValueEscapeString(b *testing.B) {

@@ -22,30 +22,44 @@ import (
 // BenchmarkValueDecodeInt-4                             	 2000000	       920 ns/op	     288 B/op	       6 allocs/op
 // BenchmarkValueEscapeString-4                          	 1000000	      1821 ns/op	       0 B/op	       0 allocs/op
 
-const (
-	Object Type = 0
-	Array  Type = 1
-	String Type = 2
-	Number Type = 3
-	True   Type = 4
-	False  Type = 5
-	Null   Type = 6
-	Field  Type = 7
+// 0-11  bits – node type
+// 12-35 bits – node index
+// 36-59 bits – dirty sequence
+// 60    bit  – map usage
+type hellBits uint64
 
-	// internal
-	objectEnd     Type = 8
-	arrayEnd      Type = 9
-	escapedString Type = 10
-	escapedField  Type = 11
+const (
+	hellBitObject        hellBits = 1 << 0
+	hellBitEnd           hellBits = 1 << 1
+	hellBitArray         hellBits = 1 << 2
+	hellBitArrayEnd      hellBits = 1 << 3
+	hellBitString        hellBits = 1 << 4
+	hellBitEscapedString hellBits = 1 << 5
+	hellBitNumber        hellBits = 1 << 6
+	hellBitTrue          hellBits = 1 << 7
+	hellBitFalse         hellBits = 1 << 8
+	hellBitNull          hellBits = 1 << 9
+	hellBitField         hellBits = 1 << 10
+	hellBitEscapedField  hellBits = 1 << 11
+	hellBitTypeFilter    hellBits = 1<<11 - 1
+
+	hellBitUseMap       hellBits = 1 << 60
+	hellBitsUseMapReset          = 1<<64 - 1 - hellBitUseMap
+
+	hellBitsDirtyFilter          = 0x0FFFFFF000000000
+	hellBitsDirtyReset  hellBits = 0xF000000FFFFFFFFF
+	hellBitsDirtyStep   hellBits = 1 << 36
+
+	hellBitsIndexFilter hellBits = 0x0000000FFFFFF000
+	hellBitsIndexReset  hellBits = 0xFFFFFFF000000FFF
+	hellBitsIndexStep   hellBits = 1 << 12
 
 	hex = "0123456789abcdef"
 )
 
-type Type int
-
 var (
-	StartNodePoolSize = 16
-	MapUseThreshold   = 18
+	StartNodePoolSize = 128
+	MapUseThreshold   = 16
 
 	decoderPool      = make([]*decoder, 0, 16)
 	decoderPoolIndex = -1
@@ -77,10 +91,6 @@ var (
 	ErrNotField  = errors.New("node isn't an object field")
 )
 
-const (
-	FlagFieldMap = 1 << 0
-)
-
 func init() {
 	numbersMap['.'] = 1
 	numbersMap['-'] = 1
@@ -89,97 +99,117 @@ func init() {
 	numbersMap['+'] = 1
 }
 
-type Root struct {
-	*Node
-}
-
-type Last struct {
-	*Node
-}
-
+/*
+Node Is a building block of the decoded JSON. There is seven basic nodes:
+	1. Object
+	2. Array
+	3. String
+	4. Number
+	5. True
+	6. False
+	7. Null
+And a special one – Field, which represents the field(key) on an objects.
+It allows to easily change field's name, checkout MutateToField() function.
+*/
 type Node struct {
-	Type   Type
+	bits   hellBits
+	data   string
 	next   *Node
 	parent *Node
-	value  string
-	data   *data
+	nodes  []*Node
+	fields *map[string]int
 }
 
+/*
+Root is a top Node of decoded JSON. It holds decoder, current JSON data and pool of Nodes.
+Node pool is used to reduce memory allocations and GC time.
+Checkout ReleaseMem()/ReleasePoolMem()/ReleaseBufMem() to clear pools.
+Root can be reused to decode another JSON using DecodeBytes()/DecodeString().
+Also Root can decode additional JSON using DecodeAdditionalBytes()/DecodeAdditionalString().
+*/
+type Root struct {
+	*Node
+	decoder *decoder
+}
+
+/*
+StrictNode implements API with error handling.
+Transform any Node with MutateToStrict(), Mutate*()/As*() functions will return an error
+*/
 type StrictNode struct {
 	*Node
 }
 
-type data struct {
-	values   []*Node
-	end      *Node
-	index    int
-	flags    int
-	dirtySeq int
-	fields   map[string]int
-	err      *StrictNode
-	decoder  *decoder
-}
-
 type decoder struct {
-	id int
-
-	json []byte
-
-	root     Root
-	nodePool []*Node
-	nodes    int
+	id        int
+	buf       []byte
+	root      Root
+	nodePool  []*Node
+	nodeCount int
 }
 
-// ReleaseMem sends node pool and internal buffer to GC
-// useful to reduce memory usage after decoding big JSON
+/*
+ReleaseMem sends node pool and internal buffer to GC.
+Useful to reduce memory usage after decoding big JSON.
+*/
 func (r *Root) ReleaseMem() {
 	r.ReleasePoolMem()
 	r.ReleaseBufMem()
 }
 
-// ReleasePoolMem sends node pool to GC
+/*
+ReleasePoolMem sends node pool to GC.
+Useful to reduce memory usage after decoding big JSON.
+*/
 func (r *Root) ReleasePoolMem() {
-	r.data.decoder.initPool()
+	r.decoder.initPool()
 }
 
-// ReleasePoolMem sends internal buffer to GC
+/*
+ReleaseBufMem sends internal buffer to GC.
+Useful to reduce memory usage after decoding big JSON.
+*/
 func (r *Root) ReleaseBufMem() {
-	r.data.decoder.json = make([]byte, 0, 0)
+	r.decoder.buf = make([]byte, 0, 0)
 }
 
-// BuffCap returns current size of internal buffer
+/*
+BuffCap returns current size of internal buffer.
+*/
 func (r *Root) BuffCap() int {
-	return cap(r.data.decoder.json)
+	return cap(r.decoder.buf)
 }
 
-// PullSize returns current size of node pool
-func (r *Root) PullSize() int {
-	return len(r.data.decoder.nodePool)
+/*
+PoolSize returns how many Node objects is in the pool right now.
+*/
+func (r *Root) PoolSize() int {
+	return len(r.decoder.nodePool)
 }
 
 // ******************** //
 //      MAIN SHIT       //
 // ******************** //
 
-// legendary insane decode function
+// decode is a legendary function for decoding JSONs
 func (d *decoder) decode(json string, shouldReset bool) (*Node, error) {
 	if shouldReset {
-		d.nodes = 0
-		d.json = d.json[:0]
+		d.nodeCount = 0
+		d.buf = d.buf[:0]
 	}
-	o := len(d.json)
+	o := len(d.buf)
 
-	d.json = append(d.json, json...)
-	json = toString(d.json)
+	d.buf = append(d.buf, json...)
+	json = toString(d.buf)
 
 	l := len(json)
 	if l == 0 {
-		return nil, insaneErr(ErrEmptyJSON, json, o)
+		return nil, insaneErr(ErrEmptyJSON, cp(json), o)
 	}
 
 	nodePool := d.nodePool
 	nodePoolLen := len(nodePool)
-	nodes := d.nodes
+	nodes := d.nodeCount
 
 	root := nodePool[nodes]
 	root.parent = nil
@@ -192,7 +222,7 @@ func (d *decoder) decode(json string, shouldReset bool) (*Node, error) {
 	goto decode
 decodeObject:
 	if o == l {
-		return nil, insaneErr(ErrUnexpectedJSONEnding, json, o)
+		return nil, insaneErr(ErrUnexpectedJSONEnding, cp(json), o)
 	}
 
 	// skip wc
@@ -214,26 +244,26 @@ decodeObject:
 		curNode = curNode.next
 		nodes++
 
-		curNode.Type = objectEnd
+		curNode.bits = hellBitEnd
 		curNode.parent = topNode
 
-		topNode.data.end = curNode
+		topNode.next = nodePool[nodes]
 		topNode = topNode.parent
 
 		goto pop
 	}
 
 	if c != ',' {
-		if len(topNode.data.values) > 0 {
-			return nil, insaneErr(ErrExpectedComma, json, o)
+		if len(topNode.nodes) > 0 {
+			return nil, insaneErr(ErrExpectedComma, cp(json), o)
 		}
 		o--
 	} else {
-		if len(topNode.data.values) == 0 {
-			return nil, insaneErr(ErrExpectedObjectField, json, o)
+		if len(topNode.nodes) == 0 {
+			return nil, insaneErr(ErrExpectedObjectField, cp(json), o)
 		}
 		if o == l {
-			return nil, insaneErr(ErrUnexpectedJSONEnding, json, o)
+			return nil, insaneErr(ErrUnexpectedJSONEnding, cp(json), o)
 		}
 	}
 
@@ -252,7 +282,7 @@ decodeObject:
 	}
 
 	if c != '"' {
-		return nil, insaneErr(ErrExpectedObjectField, json, o)
+		return nil, insaneErr(ErrExpectedObjectField, cp(json), o)
 	}
 
 	t = o - 1
@@ -260,7 +290,7 @@ decodeObject:
 		x = strings.IndexByte(json[o:], '"')
 		o += x + 1
 		if x < 0 {
-			return nil, insaneErr(ErrUnexpectedEndOfObjectField, json, o)
+			return nil, insaneErr(ErrUnexpectedEndOfObjectField, cp(json), o)
 		}
 
 		if x == 0 || json[o-2] != '\\' {
@@ -278,7 +308,7 @@ decodeObject:
 
 	}
 	if o == l {
-		return nil, insaneErr(ErrExpectedObjectFieldSeparator, json, o)
+		return nil, insaneErr(ErrExpectedObjectFieldSeparator, cp(json), o)
 	}
 
 	curNode.next = nodePool[nodes]
@@ -300,20 +330,20 @@ decodeObject:
 	}
 
 	if c != ':' {
-		return nil, insaneErr(ErrExpectedObjectFieldSeparator, json, o)
+		return nil, insaneErr(ErrExpectedObjectFieldSeparator, cp(json), o)
 	}
 	if o == l {
-		return nil, insaneErr(ErrExpectedValue, json, o)
+		return nil, insaneErr(ErrExpectedValue, cp(json), o)
 	}
-	curNode.Type = escapedField
-	curNode.value = json[t:o]
+	curNode.bits = hellBitEscapedField
+	curNode.data = json[t:o]
 	curNode.parent = topNode
-	topNode.data.values = append(topNode.data.values, curNode)
+	topNode.nodes = append(topNode.nodes, curNode)
 
 	goto decode
 decodeArray:
 	if o == l {
-		return nil, insaneErr(ErrUnexpectedJSONEnding, json, o)
+		return nil, insaneErr(ErrUnexpectedJSONEnding, cp(json), o)
 	}
 	// skip wc
 	c = json[o]
@@ -334,35 +364,31 @@ decodeArray:
 		curNode = curNode.next
 		nodes++
 
-		curNode.Type = arrayEnd
+		curNode.bits = hellBitArrayEnd
 		curNode.parent = topNode
 
-		topNode.data.end = curNode
+		topNode.next = nodePool[nodes]
 		topNode = topNode.parent
 
 		goto pop
 	}
 
 	if c != ',' {
-		if len(topNode.data.values) > 0 {
-			return nil, insaneErr(ErrExpectedComma, json, o)
+		if len(topNode.nodes) > 0 {
+			return nil, insaneErr(ErrExpectedComma, cp(json), o)
 		}
 		o--
 	} else {
-		if len(topNode.data.values) == 0 {
-			return nil, insaneErr(ErrExpectedValue, json, o)
+		if len(topNode.nodes) == 0 {
+			return nil, insaneErr(ErrExpectedValue, cp(json), o)
 		}
 		if o == l {
-			return nil, insaneErr(ErrUnexpectedJSONEnding, json, o)
+			return nil, insaneErr(ErrUnexpectedJSONEnding, cp(json), o)
 		}
 	}
 
-	topNode.data.values = append(topNode.data.values, nodePool[nodes])
+	topNode.nodes = append(topNode.nodes, nodePool[nodes])
 decode:
-	if nodes > nodePoolLen-16 {
-		nodePool = d.expandPool()
-		nodePoolLen = len(nodePool)
-	}
 	// skip wc
 	c = json[o]
 	o++
@@ -379,35 +405,40 @@ decode:
 	switch c {
 	case '{':
 		if o == l {
-			return nil, insaneErr(ErrExpectedObjectField, json, o)
+			return nil, insaneErr(ErrExpectedObjectField, cp(json), o)
 		}
 
 		curNode.next = nodePool[nodes]
 		curNode = curNode.next
 		nodes++
 
-		curNode.Type = Object
-		curNode.data.values = curNode.data.values[:0]
-		curNode.data.flags = 0
-		curNode.data.dirtySeq = -1
+		curNode.bits = hellBitObject
+		curNode.nodes = curNode.nodes[:0]
 		curNode.parent = topNode
 
 		topNode = curNode
+		if nodes >= nodePoolLen-1 {
+			nodePool = d.expandPool()
+			nodePoolLen = len(nodePool)
+		}
 		goto decodeObject
 	case '[':
 		if o == l {
-			return nil, insaneErr(ErrExpectedValue, json, o)
+			return nil, insaneErr(ErrExpectedValue, cp(json), o)
 		}
 		curNode.next = nodePool[nodes]
 		curNode = curNode.next
 		nodes++
 
-		curNode.Type = Array
-		curNode.data.values = curNode.data.values[:0]
-		curNode.data.dirtySeq = -1
+		curNode.bits = hellBitArray
+		curNode.nodes = curNode.nodes[:0]
 		curNode.parent = topNode
 
 		topNode = curNode
+		if nodes >= nodePoolLen-1 {
+			nodePool = d.expandPool()
+			nodePoolLen = len(nodePool)
+		}
 		goto decodeArray
 	case '"':
 		t = o
@@ -415,7 +446,7 @@ decode:
 			x := strings.IndexByte(json[t:], '"')
 			t += x + 1
 			if x < 0 {
-				return nil, insaneErr(ErrUnexpectedEndOfString, json, o)
+				return nil, insaneErr(ErrUnexpectedEndOfString, cp(json), o)
 			}
 			if x == 0 || json[t-2] != '\\' {
 				break
@@ -435,15 +466,14 @@ decode:
 		curNode = curNode.next
 		nodes++
 
-		curNode.Type = escapedString
-		curNode.value = json[o-1 : t]
-		curNode.data.dirtySeq = -1
+		curNode.bits = hellBitEscapedString
+		curNode.data = json[o-1 : t]
 		curNode.parent = topNode
 
 		o = t
 	case 't':
 		if len(json) < o+3 || json[o:o+3] != "rue" {
-			return nil, insaneErr(ErrUnexpectedEndOfTrue, json, o)
+			return nil, insaneErr(ErrUnexpectedEndOfTrue, cp(json), o)
 		}
 		o += 3
 
@@ -451,13 +481,12 @@ decode:
 		curNode = curNode.next
 		nodes++
 
-		curNode.Type = True
-		curNode.data.dirtySeq = -1
+		curNode.bits = hellBitTrue
 		curNode.parent = topNode
 
 	case 'f':
 		if len(json) < o+4 || json[o:o+4] != "alse" {
-			return nil, insaneErr(ErrUnexpectedEndOfFalse, json, o)
+			return nil, insaneErr(ErrUnexpectedEndOfFalse, cp(json), o)
 		}
 		o += 4
 
@@ -465,13 +494,12 @@ decode:
 		curNode = curNode.next
 		nodes++
 
-		curNode.Type = False
-		curNode.data.dirtySeq = -1
+		curNode.bits = hellBitFalse
 		curNode.parent = topNode
 
 	case 'n':
 		if len(json) < o+3 || json[o:o+3] != "ull" {
-			return nil, insaneErr(ErrUnexpectedEndOfNull, json, o)
+			return nil, insaneErr(ErrUnexpectedEndOfNull, cp(json), o)
 		}
 		o += 3
 
@@ -479,8 +507,7 @@ decode:
 		curNode = curNode.next
 		nodes++
 
-		curNode.Type = Null
-		curNode.data.dirtySeq = -1
+		curNode.bits = hellBitNull
 		curNode.parent = topNode
 	default:
 		o--
@@ -488,16 +515,15 @@ decode:
 		for ; o != l && ((json[o] >= '0' && json[o] <= '9') || numbersMap[json[o]] == 1); o++ {
 		}
 		if t == o {
-			return nil, insaneErr(ErrExpectedValue, json, o)
+			return nil, insaneErr(ErrExpectedValue, cp(json), o)
 		}
 
 		curNode.next = nodePool[nodes]
 		curNode = curNode.next
 		nodes++
 
-		curNode.Type = Number
-		curNode.value = json[t:o]
-		curNode.data.dirtySeq = -1
+		curNode.bits = hellBitNumber
+		curNode.data = json[t:o]
 		curNode.parent = topNode
 	}
 pop:
@@ -505,12 +531,12 @@ pop:
 		goto exit
 	}
 
-	if nodes > nodePoolLen-16 {
+	if nodes >= nodePoolLen-1 {
 		nodePool = d.expandPool()
 		nodePoolLen = len(nodePool)
 	}
 
-	if topNode.Type == Object {
+	if topNode.bits&hellBitObject == hellBitObject {
 		goto decodeObject
 	} else {
 		goto decodeArray
@@ -530,12 +556,13 @@ exit:
 		}
 
 		if o != l {
-			return nil, insaneErr(ErrUnexpectedJSONEnding, json, o)
+			return nil, insaneErr(ErrUnexpectedJSONEnding, cp(json), o)
 		}
 	}
 
+	root.next = nil
 	curNode.next = nil
-	d.nodes = nodes
+	d.nodeCount = nodes
 
 	return root, nil
 }
@@ -550,7 +577,7 @@ func (d *decoder) decodeHeadless(json string, isPooled bool) (*Root, error) {
 	}
 
 	d.root.Node = root
-	d.root.data.decoder = d
+	d.root.decoder = d
 
 	return &d.root, nil
 }
@@ -579,11 +606,11 @@ func (n *Node) Encode(out []byte) []byte {
 	curNode := n
 	topNode := n
 
-	if curNode.next != nil {
-		if curNode.next.Type == objectEnd {
+	if len(curNode.nodes) == 0 {
+		if curNode.bits&hellBitObject == hellBitObject {
 			return append(out, "{}"...)
 		}
-		if curNode.next.Type == arrayEnd {
+		if curNode.bits&hellBitArray == hellBitArray {
 			return append(out, "[]"...)
 		}
 	}
@@ -592,55 +619,56 @@ func (n *Node) Encode(out []byte) []byte {
 encode:
 	out = append(out, ","...)
 encodeSkip:
-	switch curNode.Type {
-	case Object:
-		if curNode.next.Type == objectEnd {
+	switch curNode.bits & hellBitTypeFilter {
+	case hellBitObject:
+		if len(curNode.nodes) == 0 {
 			out = append(out, "{}"...)
-			curNode = curNode.next.next
+			curNode = curNode.next
 			goto popSkip
 		}
 		topNode = curNode
 		out = append(out, '{')
-		curNode = curNode.next
-		if curNode.Type == Field {
-			out = escapeString(out, curNode.value)
+		curNode = curNode.nodes[0]
+		if curNode.bits&hellBitField == hellBitField {
+			out = escapeString(out, curNode.data)
 			out = append(out, ':')
 		} else {
-			out = append(out, curNode.value...)
+			out = append(out, curNode.data...)
 		}
 		curNode = curNode.next
 		s++
 		goto encodeSkip
-	case Array:
-		if curNode.next.Type == arrayEnd {
+	case hellBitArray:
+		if len(curNode.nodes) == 0 {
 			out = append(out, "[]"...)
-			curNode = curNode.next.next
+			curNode = curNode.next
 			goto popSkip
 		}
 		topNode = curNode
 		out = append(out, '[')
-		curNode = curNode.next
+		curNode = curNode.nodes[0]
 		s++
 		goto encodeSkip
-	case Number:
-		out = append(out, curNode.value...)
-	case String:
-		out = escapeString(out, curNode.value)
-	case escapedString:
-		out = append(out, curNode.value...)
-	case False:
+	case hellBitNumber:
+		out = append(out, curNode.data...)
+	case hellBitString:
+		out = escapeString(out, curNode.data)
+	case hellBitEscapedString:
+		out = append(out, curNode.data...)
+	case hellBitFalse:
 		out = append(out, "false"...)
-	case True:
+	case hellBitTrue:
 		out = append(out, "true"...)
-	case Null:
+	case hellBitNull:
 		out = append(out, "null"...)
 	}
 pop:
 	curNode = curNode.next
 popSkip:
-	if topNode.Type == Array {
-		if curNode.Type == arrayEnd {
+	if topNode.bits&hellBitArray == hellBitArray {
+		if curNode.bits&hellBitArrayEnd == hellBitArrayEnd {
 			out = append(out, "]"...)
+			curNode = topNode
 			topNode = topNode.parent
 			s--
 			if s == 0 {
@@ -649,9 +677,10 @@ popSkip:
 			goto pop
 		}
 		goto encode
-	} else if topNode.Type == Object {
-		if curNode.Type == objectEnd {
+	} else if topNode.bits&hellBitObject == hellBitObject {
+		if curNode.bits&hellBitEnd == hellBitEnd {
 			out = append(out, "}"...)
+			curNode = topNode
 			topNode = topNode.parent
 			s--
 			if s == 0 {
@@ -660,11 +689,11 @@ popSkip:
 			goto pop
 		}
 		out = append(out, ","...)
-		if curNode.Type == Field {
-			out = escapeString(out, curNode.value)
+		if curNode.bits&hellBitField == hellBitField {
+			out = escapeString(out, curNode.data)
 			out = append(out, ':')
 		} else {
-			out = append(out, curNode.value...)
+			out = append(out, curNode.data...)
 		}
 		curNode = curNode.next
 		goto encodeSkip
@@ -678,101 +707,105 @@ func (n *Node) Dig(path ...string) *Node {
 	if n == nil {
 		return nil
 	}
-	if len(path) == 0 {
+
+	maxDepth := len(path)
+	if maxDepth == 0 {
 		return n
 	}
-	node := n
-	pathField := path[0]
 
-	pathDepth := len(path)
-	depth := 0
+	node := n
+	curField := path[0]
+	curDepth := 0
 get:
-	if node.Type == Array {
+	if node.bits&hellBitArray == hellBitArray {
 		goto getArray
 	}
 
-	if node.data.flags&FlagFieldMap != FlagFieldMap && len(node.data.values) > MapUseThreshold {
-		m := node.data.fields
-		if m == nil {
-			node.data.fields = make(map[string]int, len(node.data.values))
-			m = node.data.fields
-		} else {
-			for field := range m {
-				delete(m, field)
+	if len(node.nodes) > MapUseThreshold {
+		if node.bits&hellBitUseMap != hellBitUseMap {
+			var m map[string]int
+			if node.fields == nil {
+				m = make(map[string]int, len(node.nodes))
+				node.fields = &m
+			} else {
+				m = *node.fields
+				for field := range m {
+					delete(m, field)
+				}
 			}
-		}
 
-		for index, field := range node.data.values {
-			if field.Type == escapedField {
-				field.unescapeField()
+			for index, field := range node.nodes {
+				if field.bits&hellBitEscapedField == hellBitEscapedField {
+					field.unescapeField()
+				}
+				m[field.data] = index
 			}
-			m[field.value] = index
-		}
-		node.data.flags |= FlagFieldMap
-	}
-
-	if node.data.flags&FlagFieldMap == FlagFieldMap {
-		index, has := node.data.fields[pathField]
-		if !has {
-			return nil
+			node.bits |= hellBitUseMap
 		}
 
-		depth++
-		if depth == pathDepth {
-			result := node.data.values[index].next
-			result.data.dirtySeq = node.data.dirtySeq
-			result.data.index = index
+		if node.bits&hellBitUseMap == hellBitUseMap {
+			index, has := (*node.fields)[curField]
+			if !has {
+				return nil
+			}
 
-			return result
-		}
-
-		pathField = path[depth]
-		node = node.data.values[index].next
-		goto get
-	}
-
-	for index, field := range node.data.values {
-		if field.Type == escapedField {
-			field.unescapeField()
-		}
-
-		if field.value == pathField {
-			depth++
-			if depth == pathDepth {
-				result := field.next
-				result.data.dirtySeq = node.data.dirtySeq
-				result.data.index = index
+			curDepth++
+			if curDepth == maxDepth {
+				result := (node.nodes)[index].next
+				result.bits = result.bits&hellBitsDirtyReset | (node.bits & hellBitsDirtyFilter)
+				result.setIndex(index)
 
 				return result
 			}
-			pathField = path[depth]
+
+			curField = path[curDepth]
+			node = (node.nodes)[index].next
+			goto get
+		}
+	}
+
+	for index, field := range node.nodes {
+		if field.bits&hellBitEscapedField == hellBitEscapedField {
+			field.unescapeField()
+		}
+
+		if field.data == curField {
+			curDepth++
+			if curDepth == maxDepth {
+				result := field.next
+				result.bits = result.bits&hellBitsDirtyReset | (node.bits & hellBitsDirtyFilter)
+				result.setIndex(index)
+
+				return result
+			}
+			curField = path[curDepth]
 			node = field.next
 			goto get
 		}
 	}
 	return nil
 getArray:
-	index, err := strconv.Atoi(path[depth])
-	if err != nil || index < 0 || index >= len(node.data.values) {
+	index, err := strconv.Atoi(curField)
+	if err != nil || index < 0 || index >= len(node.nodes) {
 		return nil
 	}
-	depth++
-	if depth == pathDepth {
-		result := node.data.values[index]
-		result.data.dirtySeq = node.data.dirtySeq
-		result.data.index = index
+	curDepth++
+	if curDepth == maxDepth {
+		result := (node.nodes)[index]
+		result.bits = result.bits&hellBitsDirtyReset | (node.bits & hellBitsDirtyFilter)
+		result.setIndex(index)
 
 		return result
 	}
-	pathField = path[depth]
-	node = node.data.values[index]
+	curField = path[curDepth]
+	node = (node.nodes)[index]
 	goto get
 }
 
 func (d *decoder) getNode() *Node {
-	node := d.nodePool[d.nodes]
-	d.nodes++
-	if d.nodes > len(d.nodePool)-16 {
+	node := d.nodePool[d.nodeCount]
+	d.nodeCount++
+	if d.nodeCount > len(d.nodePool)-16 {
 		d.expandPool()
 	}
 
@@ -785,117 +818,118 @@ func (n *Node) DigStrict(path ...string) (*StrictNode, error) {
 		return nil, ErrNotFound
 	}
 
-	return result.InStrictMode(), nil
+	return result.MutateToStrict(), nil
 }
 
 func (n *Node) AddField(name string) *Node {
-	if n == nil || n.Type != Object {
+	if n == nil || n.bits&hellBitObject != hellBitObject {
 		return nil
 	}
 
-	value := n.Dig(name)
-	if value != nil {
-		return value
+	node := n.Dig(name)
+	if node != nil {
+		return node
 	}
 
-	decoder := n.data.decoder
-
-	newNull := decoder.getNode()
-	newNull.Type = Null
-	newNull.next = n.data.end
+	newNull := &Node{}
+	newNull.bits = hellBitNull
 	newNull.parent = n
 
-	newField := decoder.getNode()
-	newField.Type = Field
+	newField := n.getNode()
+	newField.bits = hellBitField
 	newField.next = newNull
 	newField.parent = n
-	newField.value = name
+	newField.data = name
 
-	l := len(n.data.values)
-	last := n
+	l := len(n.nodes)
 	if l > 0 {
-		last = n.data.values[l-1].next
-		if last.Type == Array || last.Type == Object {
-			last = last.data.end
-		}
+		lastVal := (n.nodes)[l-1]
+		newNull.next = lastVal.next.next
+		lastVal.next.next = newField
+	} else {
+		// restore lost end
+		newEnd := n.getNode()
+		newEnd.bits = hellBitEnd
+		newEnd.next = n.next
+		newEnd.parent = n
+		newNull.next = newEnd
 	}
-	last.next = newField
+	n.nodes = append(n.nodes, newField)
 
-	n.data.values = append(n.data.values, newField)
-
-	if n.data.flags&FlagFieldMap == FlagFieldMap {
-		n.data.fields[name] = l
+	if n.bits&hellBitUseMap == hellBitUseMap {
+		(*n.fields)[name] = l
 	}
 
 	return newNull
 }
 
-func (n *Node) AppendElement() *Node {
-	if n == nil || n.Type != Array {
+func (n *Node) AddElement() *Node {
+	if n == nil || n.bits&hellBitArray != hellBitArray {
 		return nil
 	}
 
-	decoder := n.data.decoder
-
-	newNull := decoder.getNode()
-	newNull.Type = Null
-	newNull.next = n.data.end
+	newNull := n.getNode()
+	newNull.bits = hellBitNull
 	newNull.parent = n
 
-	l := len(n.data.values)
-	last := n
+	l := len(n.nodes)
 	if l > 0 {
-		last = n.data.values[l-1]
-		if last.Type == Array || last.Type == Object {
-			last = last.data.end
-		}
+		lastVal := (n.nodes)[l-1]
+		newNull.next = lastVal.next
+		lastVal.next = newNull
+	} else {
+		// restore lost end
+		newEnd := n.getNode()
+		newEnd.bits = hellBitArrayEnd
+		newEnd.next = n.next
+		newEnd.parent = n
+		newNull.next = newEnd
 	}
-	last.next = newNull
-
-	n.data.values = append(n.data.values, newNull)
+	n.nodes = append(n.nodes, newNull)
 
 	return newNull
 }
 
 func (n *Node) InsertElement(pos int) *Node {
-	if n == nil || n.Type != Array {
+	if n == nil || n.bits&hellBitArray != hellBitArray {
 		return nil
 	}
 
-	l := len(n.data.values)
+	l := len(n.nodes)
 	if pos < 0 || pos > l {
 		return nil
 	}
 
-	prev := n
-	if pos > 0 {
-		prev = n.data.values[pos-1]
-		if prev.Type == Array || prev.Type == Object {
-			prev = prev.data.end
+	newNull := n.getNode()
+	newNull.bits = hellBitNull
+	newNull.parent = n
+
+	if l == 0 {
+		// restore lost end
+		newEnd := n.getNode()
+		newEnd.bits = hellBitArrayEnd
+		newEnd.next = n.next
+		newEnd.parent = n
+		newNull.next = newEnd
+	} else {
+		if pos != l {
+			newNull.next = n.nodes[pos]
+		} else {
+			newNull.next = n.nodes[pos-1].next
 		}
 	}
 
-	decoder := n.data.decoder
-
-	newNull := decoder.getNode()
-	newNull.Type = Null
-	newNull.next = n.data.end
-	newNull.parent = n
-
-	prev.next = newNull
-	if pos != l {
-		newNull.next = n.data.values[pos]
-	} else {
-		newNull.next = n.data.end
+	if pos > 0 {
+		n.nodes[pos-1].next = newNull
 	}
 
-	leftPart := n.data.values[:pos]
-	rightPart := n.data.values[pos:]
+	leftPart := n.nodes[:pos]
+	rightPart := n.nodes[pos:]
 
-	n.data.values = make([]*Node, 0, 0)
-	n.data.values = append(n.data.values, leftPart...)
-	n.data.values = append(n.data.values, newNull)
-	n.data.values = append(n.data.values, rightPart...)
+	n.nodes = make([]*Node, 0, 0)
+	n.nodes = append(n.nodes, leftPart...)
+	n.nodes = append(n.nodes, newNull)
+	n.nodes = append(n.nodes, rightPart...)
 
 	return newNull
 }
@@ -913,116 +947,57 @@ func (n *Node) Suicide() {
 		return
 	}
 
-	workingIndex := n.actualizeIndex()
+	delIndex := n.actualizeIndex()
 	// already deleted?
-	if workingIndex == -1 {
+	if delIndex == -1 {
 		return
 	}
 
 	// mark owner as dirty
-	owner.data.dirtySeq++
+	owner.bits += hellBitsDirtyStep
 
-	switch owner.Type {
-	case Object:
-		lastIndex := len(owner.data.values) - 1
-		deletingField := owner.data.values[workingIndex]
-		if lastIndex == 0 {
-			owner.next = owner.data.end
-			owner.data.values = owner.data.values[:0]
+	switch owner.bits & hellBitTypeFilter {
+	case hellBitObject:
+		moveIndex := len(owner.nodes) - 1
+		delField := owner.nodes[delIndex]
+		if moveIndex == 0 {
+			owner.nodes = owner.nodes[:0]
 
-			if owner.data.flags&FlagFieldMap == FlagFieldMap {
-				delete(owner.data.fields, deletingField.value)
+			if owner.bits&hellBitUseMap == hellBitUseMap {
+				delete(*owner.fields, delField.data)
 			}
 
 			return
 		}
 
-		movingField := owner.data.values[lastIndex]
-		owner.data.values[workingIndex] = movingField
-		owner.data.values = owner.data.values[:len(owner.data.values)-1]
+		lastField := owner.nodes[moveIndex]
+		owner.nodes[delIndex] = lastField
 
-		if workingIndex == 0 {
-			owner.next = movingField
-		} else {
-			prevVal := owner.data.values[workingIndex-1].next
-			if prevVal.Type == Object || prevVal.Type == Array {
-				prevVal.data.end.next = movingField
-			} else {
-				prevVal.next = movingField
+		if delIndex != 0 {
+			owner.nodes[delIndex-1].next.next = lastField
+		}
+
+		owner.nodes[moveIndex-1].next.next = owner.nodes[moveIndex].next.next
+		if lastField != n.next {
+			lastField.next.next = n.next
+		}
+
+		if owner.bits&hellBitUseMap == hellBitUseMap {
+			delete(*owner.fields, delField.data)
+			if delIndex != moveIndex {
+				(*owner.fields)[lastField.data] = delIndex
 			}
 		}
+		owner.nodes = owner.nodes[:len(owner.nodes)-1]
 
-		if lastIndex != 0 {
-			prevVal := owner.data.values[lastIndex-1].next
-			if prevVal.Type == Object || prevVal.Type == Array {
-				prevVal.data.end.next = owner.data.end
-			} else {
-				prevVal.next = owner.data.end
-			}
-		} else {
-			owner.next = owner.data.end
+	case hellBitArray:
+		if delIndex != 0 {
+			owner.nodes[delIndex-1].next = n.next
 		}
-
-		end := n
-		if n.Type == Object || n.Type == Array {
-			end = n.data.end
-		}
-
-		if movingField != end.next {
-			if movingField.next.Type == Object || movingField.next.Type == Array {
-				movingField.next.data.end.next = end.next
-			} else {
-				movingField.next.next = end.next
-			}
-		}
-
-		if owner.data.flags&FlagFieldMap == FlagFieldMap {
-			delete(owner.data.fields, deletingField.value)
-			if workingIndex != lastIndex {
-				(owner.data.fields)[movingField.value] = workingIndex
-			}
-		}
-	case Array:
-		deletingEl := n
-		owner.data.values = append(owner.data.values[:workingIndex], owner.data.values[workingIndex+1:]...)
-
-		var prev *Node
-		if workingIndex == 0 {
-			prev = owner
-		} else {
-			prev = owner.data.values[workingIndex-1]
-			if prev.Type == Object || prev.Type == Array {
-				prev = prev.data.end
-			}
-		}
-
-		if deletingEl.Type == Object || deletingEl.Type == Array {
-			prev.next = deletingEl.data.end.next
-		} else {
-			prev.next = deletingEl.next
-		}
-
+		owner.nodes = append(owner.nodes[:delIndex], owner.nodes[delIndex+1:]...)
 	default:
 		panic("insane json really goes outta its mind")
 	}
-}
-
-func (n *Node) tryDropLinks() {
-	if n.Type != Object && n.Type != Array {
-		return
-	}
-
-	index := n.actualizeIndex()
-	if index == -1 {
-		return
-	}
-
-	next := n.parent.data.end
-	if index != len(n.parent.data.values)-1 {
-		next = n.parent.data.values[index+1]
-	}
-
-	n.next = next
 }
 
 func (n *Node) actualizeIndex() int {
@@ -1031,18 +1006,17 @@ func (n *Node) actualizeIndex() int {
 		return -1
 	}
 
-	// check if owner isn't dirty so nothing to do
-	if n.data.dirtySeq != -1 && n.data.dirtySeq == owner.data.dirtySeq {
+	a := n.bits & hellBitsDirtyFilter
+	b := owner.bits & hellBitsDirtyFilter
 
-		return n.data.index
+	//  if owner isn't dirty then nothing to do
+	if a != 0 && a == b {
+		return n.getIndex()
 	}
 
 	index := n.findSelf()
-	n.data.index = index
-	if owner.data.dirtySeq == -1 {
-		owner.data.dirtySeq = 0
-	}
-	n.data.dirtySeq = owner.data.dirtySeq
+	n.setIndex(index)
+	n.bits = n.bits&hellBitsDirtyReset | (owner.bits & hellBitsDirtyFilter)
 
 	return index
 }
@@ -1054,15 +1028,15 @@ func (n *Node) findSelf() int {
 	}
 
 	index := -1
-	if owner.Type == Array {
-		for i, node := range owner.data.values {
+	if owner.bits&hellBitArray == hellBitArray {
+		for i, node := range owner.nodes {
 			if node == n {
 				index = i
 				break
 			}
 		}
 	} else {
-		for i, node := range owner.data.values {
+		for i, node := range owner.nodes {
 			if node.next == n {
 				index = i
 				break
@@ -1080,11 +1054,11 @@ func (n *Node) MergeWith(node *Node) *Node {
 	if n == nil || node == nil {
 		return n
 	}
-	if !n.IsObject() || !node.IsObject() {
+	if n.bits&hellBitObject != hellBitObject || node.bits&hellBitObject != hellBitObject {
 		return n
 	}
 
-	for _, child := range node.data.values {
+	for _, child := range node.nodes {
 		child.unescapeField()
 		childField := child.AsString()
 		x := n.AddField(childField)
@@ -1100,30 +1074,14 @@ func (n *Node) MutateToNode(node *Node) *Node {
 		return n
 	}
 
-	n.tryDropLinks()
-
-	curNext := n.next
-	if n.Type == Object || n.Type == Array {
-		curNext = n.data.end.next
-	}
-
-	if node.Type == Object || node.Type == Array {
-		node.data.end.next = curNext
-	} else {
-		node.next = curNext
-	}
-
-	n.Type = node.Type
-	n.value = node.value
-	if node.Type == Object || node.Type == Array {
-		n.next = node.next
-		n.data.end = node.data.end
-		n.data.end.parent = n.parent
-		n.data.flags &= ^FlagFieldMap // reset field mapping
-		n.data.values = append(n.data.values[:0], node.data.values...)
-		for _, child := range node.data.values {
+	n.bits = node.bits
+	n.data = node.data
+	if node.bits&hellBitObject == hellBitObject || node.bits&hellBitArray == hellBitArray {
+		n.bits &= hellBitsUseMapReset
+		n.nodes = append((n.nodes)[:0], node.nodes...)
+		for _, child := range node.nodes {
 			child.parent = n
-			if node.Type == Object {
+			if node.bits&hellBitObject == hellBitObject {
 				child.next.parent = n
 			}
 		}
@@ -1132,12 +1090,12 @@ func (n *Node) MutateToNode(node *Node) *Node {
 	return n
 }
 
-func (n *Node) MutateToJSON(json string) *Node {
+func (n *Node) MutateToJSON(root *Root, json string) *Node {
 	if n == nil {
 		return n
 	}
 
-	node, err := n.data.decoder.decode(json, false)
+	node, err := root.decoder.decode(json, false)
 	if err != nil {
 		return n
 	}
@@ -1145,147 +1103,123 @@ func (n *Node) MutateToJSON(json string) *Node {
 	return n.MutateToNode(node)
 }
 
-// MutateToField changes name of object's field
+// MutateToField changes name of objects's field
 // works only with Field nodes received by AsField()/AsFields()
 // example:
 // root, err := insaneJSON.DecodeString(`{"a":"a","b":"b"}`)
 // root.AsField("a").MutateToField("new_name")
 // root.Encode() will be {"new_name":"a","b":"b"}
 func (n *Node) MutateToField(newFieldName string) *Node {
-	if n == nil || n.Type != Field {
+	if n == nil || n.bits&hellBitField != hellBitField {
 		return n
 	}
 
 	parent := n.parent
-	if parent.data.flags&FlagFieldMap == FlagFieldMap {
-		x := parent.data.fields[n.value]
-		delete(parent.data.fields, n.value)
-		parent.data.fields[newFieldName] = x
+	if parent.bits&hellBitUseMap == hellBitUseMap {
+		x := (*parent.fields)[n.data]
+		delete(*parent.fields, n.data)
+		(*parent.fields)[newFieldName] = x
 	}
 
-	n.value = newFieldName
+	n.data = newFieldName
 
 	return n
 }
 
 func (n *Node) MutateToInt(value int) *Node {
-	if n == nil || n.Type == Field {
+	if n == nil || n.bits&hellBitField == hellBitField {
 		return n
 	}
-	n.tryDropLinks()
 
-	n.Type = Number
-	n.value = strconv.Itoa(value)
+	n.bits = hellBitNumber
+	n.data = strconv.Itoa(value)
 
 	return n
 }
 
 func (n *Node) MutateToFloat(value float64) *Node {
-	if n == nil || n.Type == Field {
+	if n == nil || n.bits&hellBitField == hellBitField {
 		return n
 	}
-	n.tryDropLinks()
 
-	n.Type = Number
-	n.value = strconv.FormatFloat(value, 'f', -1, 64)
+	n.bits = hellBitNumber
+	n.data = strconv.FormatFloat(value, 'f', -1, 64)
 
 	return n
 }
 
 func (n *Node) MutateToBool(value bool) *Node {
-	if n == nil || n.Type == Field {
+	if n == nil || n.bits&hellBitField == hellBitField {
 		return n
 	}
-	n.tryDropLinks()
 
 	if value {
-		n.Type = True
+		n.bits = hellBitTrue
 	} else {
-		n.Type = False
+		n.bits = hellBitFalse
 	}
 
 	return n
 }
 
 func (n *Node) MutateToNull(value bool) *Node {
-	if n == nil || n.Type == Field {
+	if n == nil || n.bits&hellBitField == hellBitField {
 		return n
 	}
-	n.tryDropLinks()
 
-	n.Type = Null
+	n.bits = hellBitNull
 
 	return n
 }
 
 func (n *Node) MutateToString(value string) *Node {
-	if n == nil || n.Type == Field {
+	if n == nil || n.bits&hellBitField == hellBitField {
 		return nil
 	}
-	n.tryDropLinks()
 
-	n.Type = String
-	n.value = value
+	n.bits = hellBitString
+	n.data = value
 
 	return n
 }
 
 func (n *Node) MutateToEscapedString(value string) *Node {
-	if n == nil || n.Type == Field {
+	if n == nil || n.bits&hellBitField == hellBitField {
 		return nil
 	}
-	n.tryDropLinks()
 
-	n.Type = escapedString
-	n.value = value
+	n.bits = hellBitEscapedString
+	n.data = value
 
 	return n
 }
 
 func (n *Node) MutateToObject() *Node {
-	if n == nil || n.Type == Field {
+	if n == nil || n.bits&hellBitField == hellBitField {
 		return n
 	}
-	n.tryDropLinks()
 
-	n.Type = Object
-
-	decoder := n.data.decoder
-
-	objEnd := decoder.getNode()
-	objEnd.Type = objectEnd
-	objEnd.next = n.next
-	objEnd.parent = n
-
-	n.next = objEnd
+	n.bits = hellBitObject
+	n.nodes = n.nodes[:0]
 
 	return n
 }
 
-func (n *Node) AsField(field string) *Node {
-	if n == nil || n.Type != Object {
-		return nil
-	}
-
-	value := n.Dig(field)
-	if value == nil {
-		return nil
-	}
-
-	return n.data.values[value.data.index]
+func (n *Node) MutateToStrict() *StrictNode {
+	return &StrictNode{n}
 }
 
-func (n *StrictNode) AsField(field string) (*Node, error) {
-	if n == nil || n.Type != Object {
-		return nil, ErrNotObject
+func (n *Node) DigField(path ...string) *Node {
+	if n == nil || len(path) == 0 {
+		return nil
 	}
 
-	value := n.Dig(field)
-	if value == nil {
-		return nil, ErrNotFound
+	node := n.Dig(path...)
+	if node == nil {
+		return nil
 	}
 
-	return n.data.values[value.data.index], nil
+	return n.nodes[node.getIndex()]
 }
 
 func (n *Node) AsFields() []*Node {
@@ -1293,35 +1227,35 @@ func (n *Node) AsFields() []*Node {
 		return make([]*Node, 0, 0)
 	}
 
-	if n.Type != Object {
-		return n.data.values[:0]
+	if n.bits&hellBitObject != hellBitObject {
+		return (n.nodes)[:0]
 	}
 
-	for _, node := range n.data.values {
-		if node.Type == escapedField {
+	for _, node := range n.nodes {
+		if node.bits&hellBitEscapedField == hellBitEscapedField {
 			node.unescapeField()
 		}
 	}
 
-	return n.data.values
+	return n.nodes
 }
 
 func (n *StrictNode) AsFields() ([]*Node, error) {
-	if n.Type != Object {
+	if n.bits&hellBitObject != hellBitObject {
 		return nil, ErrNotObject
 	}
 
-	for _, node := range n.data.values {
-		if node.Type == escapedField {
+	for _, node := range n.nodes {
+		if node.bits&hellBitEscapedField == hellBitEscapedField {
 			node.unescapeField()
 		}
 	}
 
-	return n.data.values, nil
+	return n.nodes, nil
 }
 
 func (n *Node) AsFieldValue() *Node {
-	if n == nil || n.Type != Field {
+	if n == nil || n.bits&hellBitField != hellBitField {
 		return nil
 	}
 
@@ -1329,7 +1263,7 @@ func (n *Node) AsFieldValue() *Node {
 }
 
 func (n *StrictNode) AsFieldValue() (*Node, error) {
-	if n == nil || n.Type != Field {
+	if n == nil || n.bits&hellBitField != hellBitField {
 		return nil, ErrNotField
 	}
 
@@ -1340,36 +1274,36 @@ func (n *Node) AsArray() []*Node {
 	if n == nil {
 		return make([]*Node, 0, 0)
 	}
-	if n.Type != Array {
-		return n.data.values[:0]
+	if n.bits&hellBitArray != hellBitArray {
+		return (n.nodes)[:0]
 	}
 
-	return n.data.values
+	return n.nodes
 }
 
 func (n *StrictNode) AsArray() ([]*Node, error) {
-	if n == nil || n.Type != Array {
+	if n == nil || n.bits&hellBitArray != hellBitArray {
 		return nil, ErrNotArray
 	}
 
-	return n.data.values, nil
+	return n.nodes, nil
 }
 
 func (n *Node) unescapeStr() {
-	value := n.value
-	n.value = unescapeStr(value[1 : len(value)-1])
-	n.Type = String
+	value := n.data
+	n.data = unescapeStr(value[1 : len(value)-1])
+	n.bits = hellBitString
 }
 
 func (n *Node) unescapeField() {
-	if n.Type == Field {
+	if n.bits&hellBitField == hellBitField {
 		return
 	}
 
-	value := n.value
+	value := n.data
 	i := strings.LastIndexByte(value, '"')
-	n.value = unescapeStr(value[1:i])
-	n.Type = Field
+	n.data = unescapeStr(value[1:i])
+	n.bits = hellBitField
 }
 
 func (n *Node) AsString() string {
@@ -1377,23 +1311,23 @@ func (n *Node) AsString() string {
 		return ""
 	}
 
-	switch n.Type {
-	case String:
-		return n.value
-	case escapedString:
+	switch n.bits & hellBitTypeFilter {
+	case hellBitString:
+		return n.data
+	case hellBitEscapedString:
 		n.unescapeStr()
-		return n.value
-	case Number:
-		return n.value
-	case True:
+		return n.data
+	case hellBitNumber:
+		return n.data
+	case hellBitTrue:
 		return "true"
-	case False:
+	case hellBitFalse:
 		return "false"
-	case Null:
+	case hellBitNull:
 		return "null"
-	case Field:
-		return n.value
-	case escapedField:
+	case hellBitField:
+		return n.data
+	case hellBitEscapedField:
 		panic("insane json really goes outta its mind")
 	default:
 		return ""
@@ -1414,19 +1348,19 @@ func (n *StrictNode) AsBytes() ([]byte, error) {
 }
 
 func (n *StrictNode) AsString() (string, error) {
-	if n.Type == escapedField {
+	if n.bits&hellBitEscapedField == hellBitEscapedField {
 		panic("insane json really goes outta its mind")
 	}
 
-	if n.Type == escapedString {
+	if n.bits&hellBitEscapedString == hellBitEscapedString {
 		n.unescapeStr()
 	}
 
-	if n == nil || n.Type != String {
+	if n == nil || n.bits&hellBitString != hellBitString {
 		return "", ErrNotString
 	}
 
-	return n.value, nil
+	return n.data, nil
 }
 
 func (n *Node) AsEscapedString() string {
@@ -1434,22 +1368,22 @@ func (n *Node) AsEscapedString() string {
 		return ""
 	}
 
-	switch n.Type {
-	case String:
-		return toString(escapeString(make([]byte, 0, 0), n.value))
-	case escapedString:
-		return n.value
-	case Number:
-		return n.value
-	case True:
+	switch n.bits & hellBitTypeFilter {
+	case hellBitString:
+		return toString(escapeString(make([]byte, 0, 0), n.data))
+	case hellBitEscapedString:
+		return n.data
+	case hellBitNumber:
+		return n.data
+	case hellBitTrue:
 		return "true"
-	case False:
+	case hellBitFalse:
 		return "false"
-	case Null:
+	case hellBitNull:
 		return "null"
-	case Field:
-		return n.value
-	case escapedField:
+	case hellBitField:
+		return n.data
+	case hellBitEscapedField:
 		panic("insane json really goes outta its mind")
 	default:
 		return ""
@@ -1457,19 +1391,19 @@ func (n *Node) AsEscapedString() string {
 }
 
 func (n *StrictNode) AsEscapedString() (string, error) {
-	if n.Type == escapedField {
+	if n.bits&hellBitEscapedField == hellBitEscapedField {
 		panic("insane json really goes outta its mind")
 	}
 
-	if n == nil || n.Type != String {
+	if n == nil || n.bits&hellBitString != hellBitString {
 		return "", ErrNotString
 	}
 
-	if n.Type == escapedString {
-		return n.value, nil
+	if n.bits&hellBitEscapedString == hellBitEscapedString {
+		return n.data, nil
 	}
 
-	return toString(escapeString(make([]byte, 0, 0), n.value)), nil
+	return toString(escapeString(make([]byte, 0, 0), n.data)), nil
 }
 
 func (n *Node) AsBool() bool {
@@ -1477,23 +1411,23 @@ func (n *Node) AsBool() bool {
 		return false
 	}
 
-	switch n.Type {
-	case String:
-		return n.value == "true"
-	case escapedString:
+	switch n.bits & hellBitTypeFilter {
+	case hellBitString:
+		return n.data == "true"
+	case hellBitEscapedString:
 		n.unescapeStr()
-		return n.value == "true"
-	case Number:
-		return n.value != "0"
-	case True:
+		return n.data == "true"
+	case hellBitNumber:
+		return n.data != "0"
+	case hellBitTrue:
 		return true
-	case False:
+	case hellBitFalse:
 		return false
-	case Null:
+	case hellBitNull:
 		return false
-	case Field:
-		return n.value == "true"
-	case escapedField:
+	case hellBitField:
+		return n.data == "true"
+	case hellBitEscapedField:
 		panic("insane json really goes outta its mind")
 	default:
 		return false
@@ -1501,11 +1435,11 @@ func (n *Node) AsBool() bool {
 }
 
 func (n *StrictNode) AsBool() (bool, error) {
-	if n == nil || (n.Type != True && n.Type != False) {
+	if n == nil || (n.bits&hellBitTrue != hellBitTrue && n.bits&hellBitTrue != hellBitFalse) {
 		return false, ErrNotBool
 	}
 
-	return n.Type == True, nil
+	return n.bits&hellBitTrue == hellBitTrue, nil
 }
 
 func (n *Node) AsInt() int {
@@ -1513,23 +1447,23 @@ func (n *Node) AsInt() int {
 		return 0
 	}
 
-	switch n.Type {
-	case String:
-		return int(math.Round(decodeFloat64(n.value)))
-	case escapedString:
+	switch n.bits & hellBitTypeFilter {
+	case hellBitString:
+		return int(math.Round(decodeFloat64(n.data)))
+	case hellBitEscapedString:
 		n.unescapeStr()
-		return int(math.Round(decodeFloat64(n.value)))
-	case Number:
-		return int(math.Round(decodeFloat64(n.value)))
-	case True:
+		return int(math.Round(decodeFloat64(n.data)))
+	case hellBitNumber:
+		return int(math.Round(decodeFloat64(n.data)))
+	case hellBitTrue:
 		return 1
-	case False:
+	case hellBitFalse:
 		return 0
-	case Null:
+	case hellBitNull:
 		return 0
-	case Field:
-		return int(math.Round(decodeFloat64(n.value)))
-	case escapedField:
+	case hellBitField:
+		return int(math.Round(decodeFloat64(n.data)))
+	case hellBitEscapedField:
 		panic("insane json really goes outta its mind")
 	default:
 		return 0
@@ -1537,34 +1471,34 @@ func (n *Node) AsInt() int {
 }
 
 func (n *StrictNode) AsInt() (int, error) {
-	if n == nil || n.Type != Number {
+	if n == nil || n.bits&hellBitNumber != hellBitNumber {
 		return 0, ErrNotNumber
 	}
-	num := decodeInt64(n.value)
-	if num == 0 && n.value != "0" {
+	num := decodeInt64(n.data)
+	if num == 0 && n.data != "0" {
 		return 0, ErrNotNumber
 	}
 	return int(num), nil
 }
 
 func (n *Node) AsFloat() float64 {
-	switch n.Type {
-	case String:
-		return decodeFloat64(n.value)
-	case escapedString:
+	switch n.bits & hellBitTypeFilter {
+	case hellBitString:
+		return decodeFloat64(n.data)
+	case hellBitEscapedString:
 		n.unescapeStr()
-		return decodeFloat64(n.value)
-	case Number:
-		return decodeFloat64(n.value)
-	case True:
+		return decodeFloat64(n.data)
+	case hellBitNumber:
+		return decodeFloat64(n.data)
+	case hellBitTrue:
 		return 1
-	case False:
+	case hellBitFalse:
 		return 0
-	case Null:
+	case hellBitNull:
 		return 0
-	case Field:
-		return decodeFloat64(n.value)
-	case escapedField:
+	case hellBitField:
+		return decodeFloat64(n.data)
+	case hellBitEscapedField:
 		panic("insane json really goes outta its mind")
 	default:
 		return 0
@@ -1572,52 +1506,95 @@ func (n *Node) AsFloat() float64 {
 }
 
 func (n *StrictNode) AsFloat() (float64, error) {
-	if n == nil || n.Type != Number {
+	if n == nil || n.bits&hellBitNumber != hellBitNumber {
 		return 0, ErrNotNumber
 	}
 
-	return decodeFloat64(n.value), nil
+	return decodeFloat64(n.data), nil
 }
 
 func (n *Node) IsObject() bool {
-	return n != nil && n.Type == Object
+	return n != nil && n.bits&hellBitObject == hellBitObject
 }
 
 func (n *Node) IsArray() bool {
-	return n != nil && n.Type == Array
+	return n != nil && n.bits&hellBitArray == hellBitArray
 }
 
 func (n *Node) IsNumber() bool {
-	return n != nil && n.Type == Number
+	return n != nil && n.bits&hellBitNumber == hellBitNumber
 }
 
 func (n *Node) IsString() bool {
-	return n != nil && (n.Type == String || n.Type == escapedString)
+	return n != nil && (n.bits&hellBitString == hellBitString || n.bits&hellBitEscapedString == hellBitEscapedString)
 }
 
 func (n *Node) IsTrue() bool {
-	return n != nil && n.Type == True
+	return n != nil && n.bits&hellBitTrue == hellBitTrue
 }
 
 func (n *Node) IsFalse() bool {
-	return n != nil && n.Type == False
+	return n != nil && n.bits&hellBitFalse == hellBitFalse
 }
 
 func (n *Node) IsNull() bool {
-	return n != nil && n.Type == Null
+	return n != nil && n.bits&hellBitNull == hellBitNull
 }
 
 func (n *Node) IsField() bool {
-	return n != nil && n.Type == Field
+	return n != nil && n.bits&hellBitField == hellBitField
 }
 
 func (n *Node) IsNil() bool {
 	return n == nil
 }
 
-func (n *Node) InStrictMode() *StrictNode {
-	n.data.err.Node = n
-	return n.data.err
+func (n *Node) TypeStr() string {
+	if n == nil {
+		return "nil"
+	}
+
+	switch n.bits & hellBitTypeFilter {
+	case hellBitObject:
+		return "hellBitObject"
+	case hellBitEnd:
+		return "hellBitObject end"
+	case hellBitArray:
+		return "hellBitArray"
+	case hellBitArrayEnd:
+		return "hellBitArray end"
+	case hellBitField:
+		return "field"
+	case hellBitEscapedField:
+		return "field escaped"
+	case hellBitNull:
+		return "null"
+	case hellBitString:
+		return "string"
+	case hellBitEscapedString:
+		return "string escaped"
+	case hellBitNumber:
+		return "number"
+	case hellBitTrue:
+		return "true"
+	case hellBitFalse:
+		return "false"
+	default:
+		return "unknown"
+	}
+}
+
+// todo how can we use root's decoder here? to avoid allocs?
+func (n *Node) getNode() *Node {
+	return &Node{}
+}
+
+func (n *Node) setIndex(index int) {
+	n.bits = (n.bits & hellBitsIndexReset) + hellBits(index)*hellBitsIndexStep
+}
+
+func (n *Node) getIndex() int {
+	return int((n.bits & hellBitsIndexFilter) / hellBitsIndexStep)
 }
 
 // ******************** //
@@ -1627,14 +1604,14 @@ func (n *Node) InStrictMode() *StrictNode {
 func (d *decoder) initPool() {
 	d.nodePool = make([]*Node, StartNodePoolSize, StartNodePoolSize)
 	for i := 0; i < StartNodePoolSize; i++ {
-		d.nodePool[i] = &Node{data: &data{decoder: d}}
+		d.nodePool[i] = &Node{}
 	}
 }
 
 func (d *decoder) expandPool() []*Node {
 	c := cap(d.nodePool)
 	for i := 0; i < c; i++ {
-		d.nodePool = append(d.nodePool, &Node{data: &data{decoder: d}})
+		d.nodePool = append(d.nodePool, &Node{})
 	}
 
 	return d.nodePool
@@ -1673,51 +1650,49 @@ func Spawn() *Root {
 }
 
 func DecodeBytes(jsonBytes []byte) (*Root, error) {
-	return Spawn().data.decoder.decodeHeadless(toString(jsonBytes), true)
+	return Spawn().decoder.decodeHeadless(toString(jsonBytes), true)
 }
 
 func DecodeString(json string) (*Root, error) {
-	return Spawn().data.decoder.decodeHeadless(json, true)
+	return Spawn().decoder.decodeHeadless(json, true)
 }
 
-// DecodeBytes clear root and decode new JSON
-// useful for reusing root to decode multiple times and reduce allocations
+// DecodeBytes clears Root and decodes new JSON. Useful for reusing Root to reduce allocations.
 func (r *Root) DecodeBytes(jsonBytes []byte) error {
 	if r == nil {
 		return ErrRootIsNil
 	}
-	_, err := r.data.decoder.decodeHeadless(toString(jsonBytes), false)
+	_, err := r.decoder.decodeHeadless(toString(jsonBytes), false)
 
 	return err
 }
 
-// DecodeString clear root and decode new JSON
-// useful for reusing root to decode multiple times and reduce allocations
+// DecodeString clears Root and decodes new JSON. Useful for reusing Root to reduce allocations.
 func (r *Root) DecodeString(json string) error {
 	if r == nil {
 		return ErrRootIsNil
 	}
-	_, err := r.data.decoder.decodeHeadless(json, false)
+	_, err := r.decoder.decodeHeadless(json, false)
 
 	return err
 }
 
-// DecodeBytesAdditional doesn't clean root, uses root's node pool to decode JSON
+// DecodeBytesAdditional doesn't clean Root, uses Root node pool to decode JSON
 func (r *Root) DecodeBytesAdditional(jsonBytes []byte) (*Node, error) {
 	if r == nil {
 		return nil, ErrRootIsNil
 	}
 
-	return r.data.decoder.decode(toString(jsonBytes), false)
+	return r.decoder.decode(toString(jsonBytes), false)
 }
 
-// DecodeStringAdditional doesn't clean root, uses root's node pool to decode JSON
+// DecodeStringAdditional doesn't clean Root, uses Root node pool to decode JSON
 func (r *Root) DecodeStringAdditional(json string) (*Node, error) {
 	if r == nil {
 		return nil, ErrRootIsNil
 	}
 
-	return r.data.decoder.decode(json, false)
+	return r.decoder.decode(json, false)
 }
 
 func Release(root *Root) {
@@ -1725,7 +1700,7 @@ func Release(root *Root) {
 		return
 	}
 
-	backToPool(root.data.decoder)
+	backToPool(root.decoder)
 }
 
 func toString(b []byte) string {
@@ -1819,7 +1794,7 @@ func unescapeStr(s string) string {
 }
 
 func escapeString(out []byte, st string) []byte {
-	if !shouldBeEscaped(st) {
+	if !shouldEscape(st) {
 		out = append(out, '"')
 		out = append(out, st...)
 		out = append(out, '"')
@@ -1889,7 +1864,7 @@ func escapeString(out []byte, st string) []byte {
 	return out
 }
 
-func shouldBeEscaped(s string) bool {
+func shouldEscape(s string) bool {
 	if strings.IndexByte(s, '"') >= 0 || strings.IndexByte(s, '\\') >= 0 {
 		return true
 	}
@@ -2077,11 +2052,13 @@ func decodeFloat64(s string) float64 {
 	return 0
 }
 
-var out = make([]byte, 0, 0)
-var root = Spawn()
+var fuzzRoot *Root = nil
 
 func Fuzz(data []byte) int {
-	err := root.DecodeBytes(data)
+	if fuzzRoot == nil {
+		fuzzRoot = Spawn()
+	}
+	err := fuzzRoot.DecodeBytes(data)
 	if err != nil {
 		return -1
 	}
@@ -2109,9 +2086,9 @@ func Fuzz(data []byte) int {
 		`["a","b","c",{"5":"5","l":[3,4]}]`,
 	}
 
-	node := root.Node
+	node := fuzzRoot.Node
 
-	for i := 0; i < 40; i++ {
+	for i := 0; i < 1; i++ {
 		for j := 0; j < 100; j++ {
 			if node.IsObject() {
 				fields := node.AsFields()
@@ -2130,7 +2107,7 @@ func Fuzz(data []byte) int {
 				continue
 			}
 
-			node.AddField(fields[rand.Int()%len(fields)]).MutateToJSON(jsons[rand.Int()%len(jsons)])
+			node.AddField(fields[rand.Int()%len(fields)]).MutateToJSON(fuzzRoot, jsons[rand.Int()%len(jsons)])
 			break
 		}
 		for j := 0; j < 200; j++ {
@@ -2152,20 +2129,22 @@ func Fuzz(data []byte) int {
 			}
 
 			node.Suicide()
-			node = root.Node
-			for ; node != nil; node = node.next {
-			}
-			node = root.Node
+			node = fuzzRoot.Node
 			break
 		}
 	}
 
-	root.Encode(out)
+	fuzzRoot.EncodeToString()
 
 	return 1
 }
 
-func insaneErr(err error, json string, offset int) error {
+type jsonCopy string
+
+func cp(s string) jsonCopy {
+	return jsonCopy(s)
+}
+func insaneErr(err error, json jsonCopy, offset int) error {
 	a := offset - 20
 	b := offset + 20
 	if a < 0 {
@@ -2185,7 +2164,7 @@ func insaneErr(err error, json string, offset int) error {
 	pointer += "^"
 	str := ""
 	if a != b {
-		str = strings.ReplaceAll(json[a:b], "\n", " ")
+		str = strings.ReplaceAll(string(json[a:b]), "\n", " ")
 	}
 	str = strings.ReplaceAll(str, "\r", " ")
 	str = strings.ReplaceAll(str, "\t", " ")
