@@ -601,7 +601,6 @@ func (n *Node) EncodeToString() string {
 // mem allocations may occur only if buffer isn't long enough
 // use it for performance
 func (n *Node) Encode(out []byte) []byte {
-	out = out[:0]
 	s := 0
 	curNode := n
 	topNode := n
