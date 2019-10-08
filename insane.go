@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/rand"
 	"reflect"
 	"strconv"
 	"strings"
@@ -25,12 +24,12 @@ import (
 // 0-11  bits – node type
 // 12-35 bits – node index
 // 36-59 bits – dirty sequence
-// 60    bit  – map usage
+// 60-64 bits – object hash first element
 type hellBits uint64
 
 const (
 	hellBitObject        hellBits = 1 << 0
-	hellBitEnd           hellBits = 1 << 1
+	hellBitObjectEnd     hellBits = 1 << 1
 	hellBitArray         hellBits = 1 << 2
 	hellBitArrayEnd      hellBits = 1 << 3
 	hellBitString        hellBits = 1 << 4
@@ -41,10 +40,7 @@ const (
 	hellBitNull          hellBits = 1 << 9
 	hellBitField         hellBits = 1 << 10
 	hellBitEscapedField  hellBits = 1 << 11
-	hellBitTypeFilter    hellBits = 1<<11 - 1
-
-	hellBitUseMap       hellBits = 1 << 60
-	hellBitsUseMapReset          = 1<<64 - 1 - hellBitUseMap
+	hellBitsTypeFilter   hellBits = 1<<11 - 1
 
 	hellBitsDirtyFilter          = 0x0FFFFFF000000000
 	hellBitsDirtyReset  hellBits = 0xF000000FFFFFFFFF
@@ -54,12 +50,21 @@ const (
 	hellBitsIndexReset  hellBits = 0xFFFFFFF000000FFF
 	hellBitsIndexStep   hellBits = 1 << 12
 
+	hellBitsHashFilter hellBits = 0xF000000000000000
+	hellBitsHashReset  hellBits = 0x0FFFFFFFFFFFFFFF
+	hellBitsHashStep   hellBits = 1 << 60
+
 	hex = "0123456789abcdef"
+
+	hashOffset uint64 = 14695981039346656037
+	hashPrime  uint64 = 1099511628211
 )
 
 var (
 	StartNodePoolSize = 128
-	MapUseThreshold   = 16
+	HashSize          = 64
+
+	nilHash = make([]*Node, 0, 0)
 
 	decoderPool      = make([]*decoder, 0, 16)
 	decoderPoolIndex = -1
@@ -92,6 +97,10 @@ var (
 )
 
 func init() {
+	for i := 0; i < HashSize; i++ {
+		nilHash = append(nilHash, nil)
+	}
+
 	numbersMap['.'] = 1
 	numbersMap['-'] = 1
 	numbersMap['e'] = 1
@@ -117,7 +126,6 @@ type Node struct {
 	next   *Node
 	parent *Node
 	nodes  []*Node
-	fields *map[string]int
 }
 
 /*
@@ -244,7 +252,7 @@ decodeObject:
 		curNode = curNode.next
 		nodes++
 
-		curNode.bits = hellBitEnd
+		curNode.bits = hellBitObjectEnd
 		curNode.parent = topNode
 
 		topNode.next = nodePool[nodes]
@@ -311,10 +319,6 @@ decodeObject:
 		return nil, insaneErr(ErrExpectedObjectFieldSeparator, cp(json), o)
 	}
 
-	curNode.next = nodePool[nodes]
-	curNode = curNode.next
-	nodes++
-
 	// skip wc
 	c = json[o]
 	o++
@@ -335,10 +339,15 @@ decodeObject:
 	if o == l {
 		return nil, insaneErr(ErrExpectedValue, cp(json), o)
 	}
+
+	curNode.next = nodePool[nodes]
+	curNode = curNode.next
+	nodes++
+
 	curNode.bits = hellBitEscapedField
 	curNode.data = json[t:o]
 	curNode.parent = topNode
-	topNode.nodes = append(topNode.nodes, curNode)
+	topNode.fillHash(curNode)
 
 	goto decode
 decodeArray:
@@ -619,7 +628,7 @@ func (n *Node) Encode(out []byte) []byte {
 encode:
 	out = append(out, ","...)
 encodeSkip:
-	switch curNode.bits & hellBitTypeFilter {
+	switch curNode.bits & hellBitsTypeFilter {
 	case hellBitObject:
 		if len(curNode.nodes) == 0 {
 			out = append(out, "{}"...)
@@ -628,7 +637,7 @@ encodeSkip:
 		}
 		topNode = curNode
 		out = append(out, '{')
-		curNode = curNode.nodes[0]
+		curNode = curNode.nodes[curNode.getHashStart()]
 		if curNode.bits&hellBitField == hellBitField {
 			out = escapeString(out, curNode.data)
 			out = append(out, ':')
@@ -678,7 +687,7 @@ popSkip:
 		}
 		goto encode
 	} else if topNode.bits&hellBitObject == hellBitObject {
-		if curNode.bits&hellBitEnd == hellBitEnd {
+		if curNode.bits&hellBitObjectEnd == hellBitObjectEnd {
 			out = append(out, "}"...)
 			curNode = topNode
 			topNode = topNode.parent
@@ -716,57 +725,37 @@ func (n *Node) Dig(path ...string) *Node {
 	node := n
 	curField := path[0]
 	curDepth := 0
+	var l, index int
+	var hash uint64
+	var field *Node
 get:
 	if node.bits&hellBitArray == hellBitArray {
 		goto getArray
 	}
 
-	if len(node.nodes) > MapUseThreshold {
-		if node.bits&hellBitUseMap != hellBitUseMap {
-			var m map[string]int
-			if node.fields == nil {
-				m = make(map[string]int, len(node.nodes))
-				node.fields = &m
-			} else {
-				m = *node.fields
-				for field := range m {
-					delete(m, field)
-				}
-			}
-
-			for index, field := range node.nodes {
-				if field.bits&hellBitEscapedField == hellBitEscapedField {
-					field.unescapeField()
-				}
-				m[field.data] = index
-			}
-			node.bits |= hellBitUseMap
-		}
-
-		if node.bits&hellBitUseMap == hellBitUseMap {
-			index, has := (*node.fields)[curField]
-			if !has {
-				return nil
-			}
-
-			curDepth++
-			if curDepth == maxDepth {
-				result := (node.nodes)[index].next
-				result.bits = result.bits&hellBitsDirtyReset | (node.bits & hellBitsDirtyFilter)
-				result.setIndex(index)
-
-				return result
-			}
-
-			curField = path[curDepth]
-			node = (node.nodes)[index].next
-			goto get
-		}
+	if node.bits&hellBitObject != hellBitObject {
+		return nil
 	}
 
-	for index, field := range node.nodes {
-		if field.bits&hellBitEscapedField == hellBitEscapedField {
-			field.unescapeField()
+	l = len(curField)
+	hash = hashOffset
+	for i := 0; i < l; i++ {
+		hash ^= uint64(curField[i])
+		hash *= hashPrime
+	}
+
+	index = int(hash % uint64(HashSize))
+
+	field = n.nodes[index]
+	if field == nil {
+		return nil
+	}
+
+	for {
+		fmt.Println(index)
+		fmt.Println(field.getIndex())
+		if field.getIndex() != index || field.bits&hellBitObjectEnd == hellBitObjectEnd {
+			return nil
 		}
 
 		if field.data == curField {
@@ -774,7 +763,6 @@ get:
 			if curDepth == maxDepth {
 				result := field.next
 				result.bits = result.bits&hellBitsDirtyReset | (node.bits & hellBitsDirtyFilter)
-				result.setIndex(index)
 
 				return result
 			}
@@ -782,8 +770,9 @@ get:
 			node = field.next
 			goto get
 		}
+
+		field = field.next.next
 	}
-	return nil
 getArray:
 	index, err := strconv.Atoi(curField)
 	if err != nil || index < 0 || index >= len(node.nodes) {
@@ -849,18 +838,38 @@ func (n *Node) AddField(name string) *Node {
 	} else {
 		// restore lost end
 		newEnd := n.getNode()
-		newEnd.bits = hellBitEnd
+		newEnd.bits = hellBitObjectEnd
 		newEnd.next = n.next
 		newEnd.parent = n
 		newNull.next = newEnd
 	}
-	n.nodes = append(n.nodes, newField)
 
-	if n.bits&hellBitUseMap == hellBitUseMap {
-		(*n.fields)[name] = l
-	}
+	n.fillHash(newField)
 
 	return newNull
+}
+
+func (n *Node) fillHash(fieldNode *Node) {
+	fieldNode.unescapeField()
+	s := fieldNode.data
+	l := len(s)
+	hash := hashOffset
+	for i := 0; i < l; i++ {
+		hash ^= uint64(s[i])
+		hash *= hashPrime
+	}
+
+	index := int(hash % uint64(HashSize))
+	n.setIndex(index)
+
+	if len(n.nodes) == 0 {
+		n.setHashStart(index)
+		n.nodes = append(n.nodes, nilHash...)
+	}
+
+	if n.nodes[index] == nil {
+		n.nodes[index] = fieldNode
+	}
 }
 
 func (n *Node) AddElement() *Node {
@@ -956,40 +965,9 @@ func (n *Node) Suicide() {
 	// mark owner as dirty
 	owner.bits += hellBitsDirtyStep
 
-	switch owner.bits & hellBitTypeFilter {
+	switch owner.bits & hellBitsTypeFilter {
 	case hellBitObject:
-		moveIndex := len(owner.nodes) - 1
-		delField := owner.nodes[delIndex]
-		if moveIndex == 0 {
-			owner.nodes = owner.nodes[:0]
-
-			if owner.bits&hellBitUseMap == hellBitUseMap {
-				delete(*owner.fields, delField.data)
-			}
-
-			return
-		}
-
-		lastField := owner.nodes[moveIndex]
-		owner.nodes[delIndex] = lastField
-
-		if delIndex != 0 {
-			owner.nodes[delIndex-1].next.next = lastField
-		}
-
-		owner.nodes[moveIndex-1].next.next = owner.nodes[moveIndex].next.next
-		if lastField != n.next {
-			lastField.next.next = n.next
-		}
-
-		if owner.bits&hellBitUseMap == hellBitUseMap {
-			delete(*owner.fields, delField.data)
-			if delIndex != moveIndex {
-				(*owner.fields)[lastField.data] = delIndex
-			}
-		}
-		owner.nodes = owner.nodes[:len(owner.nodes)-1]
-
+		//todo make it works
 	case hellBitArray:
 		if delIndex != 0 {
 			owner.nodes[delIndex-1].next = n.next
@@ -1068,6 +1046,10 @@ func (n *Node) MergeWith(node *Node) *Node {
 	return n
 }
 
+func (n *Node) Visit(fn func(*Node)) {
+
+}
+
 // MutateToNode it isn't safe function, if you create node cycle, encode() may freeze
 func (n *Node) MutateToNode(node *Node) *Node {
 	if n == nil || node == nil {
@@ -1077,14 +1059,13 @@ func (n *Node) MutateToNode(node *Node) *Node {
 	n.bits = node.bits
 	n.data = node.data
 	if node.bits&hellBitObject == hellBitObject || node.bits&hellBitArray == hellBitArray {
-		n.bits &= hellBitsUseMapReset
 		n.nodes = append((n.nodes)[:0], node.nodes...)
-		for _, child := range node.nodes {
+		node.Visit(func(child *Node) {
 			child.parent = n
-			if node.bits&hellBitObject == hellBitObject {
+			if child.bits&hellBitField == hellBitField || child.bits&hellBitEscapedField == hellBitEscapedField {
 				child.next.parent = n
 			}
-		}
+		})
 	}
 
 	return n
@@ -1115,13 +1096,9 @@ func (n *Node) MutateToField(newFieldName string) *Node {
 	}
 
 	parent := n.parent
-	if parent.bits&hellBitUseMap == hellBitUseMap {
-		x := (*parent.fields)[n.data]
-		delete(*parent.fields, n.data)
-		(*parent.fields)[newFieldName] = x
-	}
-
-	n.data = newFieldName
+	value := n.next
+	value.Suicide()
+	parent.AddField(newFieldName).MutateToNode(value)
 
 	return n
 }
@@ -1206,6 +1183,9 @@ func (n *Node) MutateToObject() *Node {
 }
 
 func (n *Node) MutateToStrict() *StrictNode {
+	if n == nil {
+		return nil
+	}
 	return &StrictNode{n}
 }
 
@@ -1219,39 +1199,8 @@ func (n *Node) DigField(path ...string) *Node {
 		return nil
 	}
 
+	//todo: fix hash
 	return n.nodes[node.getIndex()]
-}
-
-func (n *Node) AsFields() []*Node {
-	if n == nil {
-		return make([]*Node, 0, 0)
-	}
-
-	if n.bits&hellBitObject != hellBitObject {
-		return (n.nodes)[:0]
-	}
-
-	for _, node := range n.nodes {
-		if node.bits&hellBitEscapedField == hellBitEscapedField {
-			node.unescapeField()
-		}
-	}
-
-	return n.nodes
-}
-
-func (n *StrictNode) AsFields() ([]*Node, error) {
-	if n.bits&hellBitObject != hellBitObject {
-		return nil, ErrNotObject
-	}
-
-	for _, node := range n.nodes {
-		if node.bits&hellBitEscapedField == hellBitEscapedField {
-			node.unescapeField()
-		}
-	}
-
-	return n.nodes, nil
 }
 
 func (n *Node) AsFieldValue() *Node {
@@ -1311,7 +1260,7 @@ func (n *Node) AsString() string {
 		return ""
 	}
 
-	switch n.bits & hellBitTypeFilter {
+	switch n.bits & hellBitsTypeFilter {
 	case hellBitString:
 		return n.data
 	case hellBitEscapedString:
@@ -1348,10 +1297,6 @@ func (n *StrictNode) AsBytes() ([]byte, error) {
 }
 
 func (n *StrictNode) AsString() (string, error) {
-	if n.bits&hellBitEscapedField == hellBitEscapedField {
-		panic("insane json really goes outta its mind")
-	}
-
 	if n.bits&hellBitEscapedString == hellBitEscapedString {
 		n.unescapeStr()
 	}
@@ -1368,7 +1313,7 @@ func (n *Node) AsEscapedString() string {
 		return ""
 	}
 
-	switch n.bits & hellBitTypeFilter {
+	switch n.bits & hellBitsTypeFilter {
 	case hellBitString:
 		return toString(escapeString(make([]byte, 0, 0), n.data))
 	case hellBitEscapedString:
@@ -1391,10 +1336,6 @@ func (n *Node) AsEscapedString() string {
 }
 
 func (n *StrictNode) AsEscapedString() (string, error) {
-	if n.bits&hellBitEscapedField == hellBitEscapedField {
-		panic("insane json really goes outta its mind")
-	}
-
 	if n == nil || n.bits&hellBitString != hellBitString {
 		return "", ErrNotString
 	}
@@ -1411,7 +1352,7 @@ func (n *Node) AsBool() bool {
 		return false
 	}
 
-	switch n.bits & hellBitTypeFilter {
+	switch n.bits & hellBitsTypeFilter {
 	case hellBitString:
 		return n.data == "true"
 	case hellBitEscapedString:
@@ -1447,7 +1388,7 @@ func (n *Node) AsInt() int {
 		return 0
 	}
 
-	switch n.bits & hellBitTypeFilter {
+	switch n.bits & hellBitsTypeFilter {
 	case hellBitString:
 		return int(math.Round(decodeFloat64(n.data)))
 	case hellBitEscapedString:
@@ -1482,7 +1423,11 @@ func (n *StrictNode) AsInt() (int, error) {
 }
 
 func (n *Node) AsFloat() float64 {
-	switch n.bits & hellBitTypeFilter {
+	if n == nil {
+		return 0
+	}
+
+	switch n.bits & hellBitsTypeFilter {
 	case hellBitString:
 		return decodeFloat64(n.data)
 	case hellBitEscapedString:
@@ -1554,10 +1499,10 @@ func (n *Node) TypeStr() string {
 		return "nil"
 	}
 
-	switch n.bits & hellBitTypeFilter {
+	switch n.bits & hellBitsTypeFilter {
 	case hellBitObject:
 		return "hellBitObject"
-	case hellBitEnd:
+	case hellBitObjectEnd:
 		return "hellBitObject end"
 	case hellBitArray:
 		return "hellBitArray"
@@ -1595,6 +1540,14 @@ func (n *Node) setIndex(index int) {
 
 func (n *Node) getIndex() int {
 	return int((n.bits & hellBitsIndexFilter) / hellBitsIndexStep)
+}
+
+func (n *Node) setHashStart(index int) {
+	n.bits = (n.bits & hellBitsHashReset) + hellBits(index)*hellBitsHashStep
+}
+
+func (n *Node) getHashStart() int {
+	return int((n.bits & hellBitsHashFilter) / hellBitsHashStep)
 }
 
 // ******************** //
@@ -2052,92 +2005,92 @@ func decodeFloat64(s string) float64 {
 	return 0
 }
 
-var fuzzRoot *Root = nil
-
-func Fuzz(data []byte) int {
-	if fuzzRoot == nil {
-		fuzzRoot = Spawn()
-	}
-	err := fuzzRoot.DecodeBytes(data)
-	if err != nil {
-		return -1
-	}
-
-	fields := []string{
-		"1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
-		"11", "21", "31", "41", "51", "61", "71", "81", "91", "101",
-		"111", "211", "311", "411", "511", "611", "711", "811", "911", "1011",
-	}
-	jsons := []string{
-		"1", "2", "3", "4", "5",
-		`{"a":"b","c":"d"}`,
-		`{"5":"5","l":[3,4]}`,
-		`{"a":{"5":"5","l":[3,4]},"c":"d"}`,
-		`{"a":"b","c":"d"}`,
-		`{"5":"5","l":[3,4]}`,
-		`{"a":"b","c":{"5":"5","l":[3,4]}}`,
-		`{"a":{"somekey":"someval", "xxx":"yyy"},"c":"d"}`,
-		`{"5":"5","l":[3,4]}`,
-		`["a","b","c","d"]`,
-		`{"5":"5","l":[3,4]}`,
-		`[{"5":"5","l":[3,4]},"b","c","d"]`,
-		`["a","b","c","d"]`,
-		`{"5":"5","l":[3,4]}`,
-		`["a","b","c",{"5":"5","l":[3,4]}]`,
-	}
-
-	node := fuzzRoot.Node
-
-	for i := 0; i < 1; i++ {
-		for j := 0; j < 100; j++ {
-			if node.IsObject() {
-				fields := node.AsFields()
-				if len(fields) == 0 {
-					break
-				}
-				node = node.Dig(fields[rand.Int()%len(fields)].AsString())
-				continue
-			}
-			if node.IsArray() {
-				fields := node.AsArray()
-				if len(fields) == 0 {
-					break
-				}
-				node = node.Dig(strconv.Itoa(rand.Int() % len(fields)))
-				continue
-			}
-
-			node.AddField(fields[rand.Int()%len(fields)]).MutateToJSON(fuzzRoot, jsons[rand.Int()%len(jsons)])
-			break
-		}
-		for j := 0; j < 200; j++ {
-			if node.IsObject() {
-				fields := node.AsFields()
-				if len(fields) == 0 {
-					break
-				}
-				node = node.Dig(fields[rand.Int()%len(fields)].AsString())
-				continue
-			}
-			if node.IsArray() {
-				fields := node.AsArray()
-				if len(fields) == 0 {
-					break
-				}
-				node = node.Dig(strconv.Itoa(rand.Int() % len(fields)))
-				continue
-			}
-
-			node.Suicide()
-			node = fuzzRoot.Node
-			break
-		}
-	}
-
-	fuzzRoot.EncodeToString()
-
-	return 1
-}
+//var fuzzRoot *Root = nil
+//
+//func Fuzz(data []byte) int {
+//	if fuzzRoot == nil {
+//		fuzzRoot = Spawn()
+//	}
+//	err := fuzzRoot.DecodeBytes(data)
+//	if err != nil {
+//		return -1
+//	}
+//
+//	fields := []string{
+//		"1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
+//		"11", "21", "31", "41", "51", "61", "71", "81", "91", "101",
+//		"111", "211", "311", "411", "511", "611", "711", "811", "911", "1011",
+//	}
+//	jsons := []string{
+//		"1", "2", "3", "4", "5",
+//		`{"a":"b","c":"d"}`,
+//		`{"5":"5","l":[3,4]}`,
+//		`{"a":{"5":"5","l":[3,4]},"c":"d"}`,
+//		`{"a":"b","c":"d"}`,
+//		`{"5":"5","l":[3,4]}`,
+//		`{"a":"b","c":{"5":"5","l":[3,4]}}`,
+//		`{"a":{"somekey":"someval", "xxx":"yyy"},"c":"d"}`,
+//		`{"5":"5","l":[3,4]}`,
+//		`["a","b","c","d"]`,
+//		`{"5":"5","l":[3,4]}`,
+//		`[{"5":"5","l":[3,4]},"b","c","d"]`,
+//		`["a","b","c","d"]`,
+//		`{"5":"5","l":[3,4]}`,
+//		`["a","b","c",{"5":"5","l":[3,4]}]`,
+//	}
+//
+//	node := fuzzRoot.Node
+//
+//	for i := 0; i < 1; i++ {
+//		for j := 0; j < 100; j++ {
+//			if node.IsObject() {
+//				fields := node.AsFields()
+//				if len(fields) == 0 {
+//					break
+//				}
+//				node = node.Dig(fields[rand.Int()%len(fields)].AsString())
+//				continue
+//			}
+//			if node.IsArray() {
+//				fields := node.AsArray()
+//				if len(fields) == 0 {
+//					break
+//				}
+//				node = node.Dig(strconv.Itoa(rand.Int() % len(fields)))
+//				continue
+//			}
+//
+//			node.AddField(fields[rand.Int()%len(fields)]).MutateToJSON(fuzzRoot, jsons[rand.Int()%len(jsons)])
+//			break
+//		}
+//		for j := 0; j < 200; j++ {
+//			if node.IsObject() {
+//				fields := node.AsFields()
+//				if len(fields) == 0 {
+//					break
+//				}
+//				node = node.Dig(fields[rand.Int()%len(fields)].AsString())
+//				continue
+//			}
+//			if node.IsArray() {
+//				fields := node.AsArray()
+//				if len(fields) == 0 {
+//					break
+//				}
+//				node = node.Dig(strconv.Itoa(rand.Int() % len(fields)))
+//				continue
+//			}
+//
+//			node.Suicide()
+//			node = fuzzRoot.Node
+//			break
+//		}
+//	}
+//
+//	fuzzRoot.EncodeToString()
+//
+//	return 1
+//}
 
 type jsonCopy string
 

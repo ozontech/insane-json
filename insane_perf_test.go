@@ -92,8 +92,11 @@ func getChaoticWorkload() ([][]byte, [][][]string, int64) {
 					break
 				}
 
-				fields := node.AsFields()
-				name := fields[rand.Int()%len(fields)].AsString()
+				fields := make([]string, 0, 0)
+				node.Visit(func(node *Node){
+					fields = append(fields, node.AsString())
+				})
+				name := fields[rand.Int()%len(fields)]
 				selector = append(selector, string([]byte(name)))
 
 				node = node.Dig(name)
