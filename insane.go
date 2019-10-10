@@ -193,8 +193,7 @@ func (r *Root) PoolSize() int {
 
 // decode is a legendary function for decoding JSONs
 func (d *decoder) decode(json string, shouldReset bool) (*Node, error) {
-	l := len(json)
-	if l == 0 {
+	if len(json) == 0 {
 		return nil, insaneErr(ErrEmptyJSON, cp(json), 0)
 	}
 
@@ -206,6 +205,7 @@ func (d *decoder) decode(json string, shouldReset bool) (*Node, error) {
 
 	d.buf = append(d.buf, json...)
 	json = toString(d.buf)
+	l := len(json)
 
 	nodePool := d.nodePool
 	nodePoolLen := len(nodePool)
