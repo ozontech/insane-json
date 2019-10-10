@@ -1,6 +1,7 @@
 package insaneJSON
 
 import (
+	"math"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,7 +18,7 @@ func TestDecodeErr(t *testing.T) {
 		json string
 		err  error
 	}{
-		// ok
+		//ok
 		{json: `0`, err: nil},
 		{json: `1.0`, err: nil},
 		{json: `"string"`, err: nil},
@@ -29,6 +30,7 @@ func TestDecodeErr(t *testing.T) {
 		{json: `[[	],0]`, err: nil},
 		{json: `{"":{"l":[30]},"c":""}`, err: nil},
 		{json: `{"a":{"6":"5","l":[3,4]},"c":"d"}`, err: nil},
+		{json: `[{"a":"a"}]`, err: nil},
 
 		// common
 		{json: ``, err: ErrEmptyJSON},
@@ -102,15 +104,17 @@ func TestDigNode(t *testing.T) {
 		result string
 	}{
 		// ok
-		//{json: `{"a":"b"}`, dig: []string{"a"}, result: "b"},
-		//{json: `{"":""}`, dig: []string{""}, result: ""},
-		//{json: `{"1":{"2":{"3":{"4":"5","_4":"_5"},"_3":"_3"},"_2":"_2"},"_1":"_1"}`, dig: []string{"1", "2", "3", "4"}, result: "5"},
-		//{json: `{"1":{"2":{"3":{"4":"5"}}}}`, dig: []string{"1", "2", "3", "4"}, result: "5"},
-		//{json: bigJSON, dig: []string{"_id"}, result: "5d57e438c48c6e5d4ca83b29"},
-		{json: string(getFile("heavy")), dig: []string{"second", "third"}, result: "ok"},
+		{json: `{"a":"b"}`, dig: []string{"a"}, result: "b"},
+		{json: `{"":""}`, dig: []string{""}, result: ""},
+		{json: `{"1":{"2":{"3":{"4":"5","_4":"_5"},"_3":"_3"},"_2":"_2"},"_1":"_1"}`, dig: []string{"1", "2", "3", "4"}, result: "5"},
+		{json: `{"1":{"2":{"3":{"4":"5"}}}}`, dig: []string{"1", "2", "3", "4"}, result: "5"},
+		{json: bigJSON, dig: []string{"_id"}, result: "5d57e438c48c6e5d4ca83b29"},
+		{json: string(getFile("heavy")), dig: []string{"first", "second", "third", "fourth", "fifth", "ok"}, result: "ok"},
+		{json: string(getFile("insane")), dig: []string{"statuses", "0", "entities", "user_mentions", "0", "screen_name"}, result: "aym0566x"},
 
 		// not ok
 		{json: `["first","second","third"]`, dig: []string{"fourth"}, result: ""},
+		{json: string(getFile("insane")), dig: []string{"statuses", "0", "fff"}, result: ""},
 	}
 
 	for _, test := range tests {
@@ -119,7 +123,7 @@ func TestDigNode(t *testing.T) {
 		assert.NoError(t, err, "error while decoding")
 		assert.NotNil(t, root, "node shouldn't be nil")
 
-		assert.Equal(t, test.result, root.Dig(test.dig...).AsString(), "wrong dig result")
+		assert.Equal(t, test.result, root.Dig(test.dig...).AsString(), "wrong dig result for: %s", test.json[:int(math.Min(100, float64(len(test.json))))])
 		Release(root)
 	}
 }
@@ -342,13 +346,13 @@ func TestAddElement(t *testing.T) {
 		count  int
 		result string
 	}{
-		{json: `[]`, count: 1, result: `[null]`},
-		{json: `[]`, count: 3, result: `[null,null,null]`},
-		{json: `[]`, count: 4, result: `[null,null,null,null]`},
-		{json: `["a"]`, count: 3, result: `["a",null,null,null]`},
-		{json: `["a","a"]`, count: 3, result: `["a","a",null,null,null]`},
+		//{json: `[]`, count: 1, result: `[null]`},
+		//{json: `[]`, count: 3, result: `[null,null,null]`},
+		//{json: `[]`, count: 4, result: `[null,null,null,null]`},
+		//{json: `["a"]`, count: 3, result: `["a",null,null,null]`},
+		//{json: `["a","a"]`, count: 3, result: `["a","a",null,null,null]`},
 		{json: `[{"a":"a"}]`, count: 3, result: `[{"a":"a"},null,null,null]`},
-		{json: `[["a","a"]]`, count: 3, result: `[["a","a"],null,null,null]`},
+		//{json: `[["a","a"]]`, count: 3, result: `[["a","a"],null,null,null]`},
 	}
 
 	for _, test := range tests {
@@ -357,7 +361,7 @@ func TestAddElement(t *testing.T) {
 		for index := 0; index < test.count; index++ {
 			root.AddElement()
 			l := len(root.AsArray())
-			assert.True(t, root.Dig(strconv.Itoa(l - 1)).IsNull(), "wrong node type")
+			assert.True(t, root.Dig(strconv.Itoa(l-1)).IsNull(), "wrong node type")
 		}
 		assert.Equal(t, test.result, root.EncodeToString(), "wrong encoding")
 		Release(root)

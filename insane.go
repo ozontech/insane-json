@@ -251,11 +251,9 @@ decodeObject:
 		curNode = nodePool[nodes]
 		curNode.bits = hellBitObjectEnd
 		curNode.parent = topNode
-		if len(topNode.nodes) > 0 {
-			topNode.nodes[topNode.getMapEnd()].next.next = curNode
-		}
 		nodes++
 		curNode.next = nodePool[nodes]
+		topNode.next = nodePool[nodes]
 		topNode = topNode.parent
 		goto next
 	}
@@ -342,7 +340,6 @@ decodeObject:
 	curNode = nodePool[nodes]
 	curNode.bits = hellBitEscapedField
 	curNode.data = json[t:o]
-	curNode.parent = topNode
 	nodes++
 	curNode.next = nodePool[nodes]
 	topNode.addField(curNode)
@@ -744,19 +741,10 @@ get:
 		hash ^= uint64(curField[i])
 		hash *= hashPrime
 	}
-
 	index = int(hash % uint64(MapSize))
 	field = node.nodes[index]
-	if field == nil {
-		return nil
-	}
-
-	fmt.Println("---")
-	fmt.Println(curField)
-	fmt.Println("-for")
 	for {
-		fmt.Println(field.AsString())
-		if field.getIndex() != index || field.bits&hellBitObjectEnd == hellBitObjectEnd {
+		if field == nil {
 			return nil
 		}
 
@@ -773,7 +761,7 @@ get:
 			goto get
 		}
 
-		field = field.next.next
+		field = field.parent
 	}
 getArray:
 	index, err := strconv.Atoi(curField)
@@ -789,7 +777,7 @@ getArray:
 		return result
 	}
 	curField = path[curDepth]
-	node = (node.nodes)[index]
+	node = node.nodes[index]
 	goto get
 }
 
@@ -832,6 +820,15 @@ func (n *Node) AddField(name string) *Node {
 	fieldNode.parent = n
 	fieldNode.data = name
 
+	if len(n.nodes) == 0 {
+		//restore lost end node
+		endNode := n.getNode()
+		endNode.bits = hellBitObjectEnd
+		endNode.next = n.next
+		endNode.parent = n
+		nullNode.next = endNode
+	}
+
 	return n.addField(fieldNode)
 }
 
@@ -849,20 +846,22 @@ func (n *Node) addField(fieldNode *Node) *Node {
 	if len(n.nodes) == 0 {
 		n.nodes = append(n.nodes, nilMap...)
 		n.nodes = append(n.nodes, fieldNode)
-
-		n.nodes[index] = fieldNode
-		fieldNode.setIndex(index)
-		fieldNode.next.setIndex(index)
-		n.setMapEnd(index)
-
-		return fieldNode.next
+	} else {
+		endIndex := n.getMapEnd()
+		lastField := n.nodes[endIndex]
+		fieldNode.setIndex(endIndex) // index to bucket to previous field
+		fieldNode.next.setIndex(index) // index to bucket to self
+		fieldNode.next.next = lastField.next.next
+		lastField.next.next = fieldNode
 	}
 
-	lastField := n.getMapEndNode()
+	if n.nodes[index] == nil {
+		fieldNode.parent = nil
+	} else {
+		fieldNode.parent = n.nodes[index]
+	}
+
 	n.nodes[index] = fieldNode
-	lastField.next.next = fieldNode
-	fieldNode.setIndex(index)
-	fieldNode.next.setIndex(index)
 	n.setMapEnd(index)
 
 	return fieldNode.next
@@ -873,26 +872,26 @@ func (n *Node) AddElement() *Node {
 		return nil
 	}
 
-	newNull := n.getNode()
-	newNull.bits = hellBitNull
-	newNull.parent = n
+	nullNode := n.getNode()
+	nullNode.bits = hellBitNull
+	nullNode.parent = n
 
 	l := len(n.nodes)
 	if l > 0 {
 		lastVal := (n.nodes)[l-1]
-		newNull.next = lastVal.next
-		lastVal.next = newNull
+		nullNode.next = lastVal.next
+		lastVal.next = nullNode
 	} else {
-		// restore lost end
-		newEnd := n.getNode()
-		newEnd.bits = hellBitArrayEnd
-		newEnd.next = n.next
-		newEnd.parent = n
-		newNull.next = newEnd
+		// restore lost end node
+		endNode := n.getNode()
+		endNode.bits = hellBitArrayEnd
+		endNode.next = n.next
+		endNode.parent = n
+		nullNode.next = endNode
 	}
-	n.nodes = append(n.nodes, newNull)
+	n.nodes = append(n.nodes, nullNode)
 
-	return newNull
+	return nullNode
 }
 
 func (n *Node) InsertElement(pos int) *Node {
@@ -963,6 +962,18 @@ func (n *Node) Suicide() {
 
 	switch owner.bits & hellBitsTypeFilter {
 	case hellBitObject:
+		if len(owner.nodes) == 0 {
+			return
+		}
+		node := owner.nodes[n.getIndex()]
+		prev := node
+		field := node
+		for node != nil {
+			if node.next == n
+		}
+		if n.parent == nil {
+
+		}
 		//todo make it works
 	case hellBitArray:
 		if delIndex != 0 {
