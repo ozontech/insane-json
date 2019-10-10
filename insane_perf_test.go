@@ -18,28 +18,28 @@ type workload struct {
 
 func getStableWorkload() ([]*workload, int64) {
 	workloads := make([]*workload, 0, 0)
-	workloads = append(workloads, loadJSON("light-ws", [][]string{
+	workloads = append(workloads, getWorkload("light-ws", [][]string{
 		{"_id"},
 		{"favoriteFruit"},
 		{"about"},
 	}))
-	workloads = append(workloads, loadJSON("many-objects", [][]string{
+	workloads = append(workloads, getWorkload("many-objects", [][]string{
 		{"deeper", "deeper", "deeper", "deeper", "deeper", "deeper", "deeper", "deeper", "deeper", "deeper", "deeper", "deeper", "deeper"},
 	}))
-	workloads = append(workloads, loadJSON("heavy", [][]string{
+	workloads = append(workloads, getWorkload("heavy", [][]string{
 		{"first", "second", "third", "fourth", "fifth"},
 	}))
-	workloads = append(workloads, loadJSON("many-fields", [][]string{
+	workloads = append(workloads, getWorkload("many-fields", [][]string{
 		{"first"},
 		{"middle"},
 		{"last"},
 	}))
-	workloads = append(workloads, loadJSON("few-fields", [][]string{
+	workloads = append(workloads, getWorkload("few-fields", [][]string{
 		{"first"},
 		{"middle"},
 		{"last"},
 	}))
-	workloads = append(workloads, loadJSON("insane", [][]string{
+	workloads = append(workloads, getWorkload("insane", [][]string{
 		{"statuses", "2", "user", "entities", "url", "urls", "0", "expanded_url"},
 		{"statuses", "36", "retweeted_status", "user", "profile", "sidebar", "fill", "color"},
 		{"statuses", "75", "entities", "user_mentions", "0", "screen_name"},
@@ -54,13 +54,18 @@ func getStableWorkload() ([]*workload, int64) {
 	return workloads, int64(size)
 }
 
-func loadJSON(name string, requests [][]string) *workload {
+func getFile(name string) []byte {
 	content, err := ioutil.ReadFile(fmt.Sprintf("benchdata/%s.json", name))
 	if err != nil {
 		panic(err.Error())
 	}
 
-	return &workload{json: content, name: name, requests: requests}
+	return content
+}
+
+func getWorkload(name string, requests [][]string) *workload {
+
+	return &workload{json: getFile(name), name: name, requests: requests}
 }
 
 func getChaoticWorkload() ([][]byte, [][][]string, int64) {
@@ -93,7 +98,7 @@ func getChaoticWorkload() ([][]byte, [][][]string, int64) {
 				}
 
 				fields := make([]string, 0, 0)
-				node.Visit(func(node *Node){
+				node.Visit(func(node *Node) {
 					fields = append(fields, node.AsString())
 				})
 				name := fields[rand.Int()%len(fields)]

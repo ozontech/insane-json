@@ -40,19 +40,20 @@ const (
 	hellBitNull          hellBits = 1 << 9
 	hellBitField         hellBits = 1 << 10
 	hellBitEscapedField  hellBits = 1 << 11
-	hellBitsTypeFilter   hellBits = 1<<11 - 1
+	hellBitsTypeFilter   hellBits = 0x0000000000000FFF
+	hellBitsTypeReset    hellBits = 0xFFFFFFFFFFFFF000
 
-	hellBitsDirtyFilter          = 0x0FFFFFF000000000
-	hellBitsDirtyReset  hellBits = 0xF000000FFFFFFFFF
-	hellBitsDirtyStep   hellBits = 1 << 36
-
-	hellBitsIndexFilter hellBits = 0x0000000FFFFFF000
-	hellBitsIndexReset  hellBits = 0xFFFFFFF000000FFF
+	hellBitsIndexFilter hellBits = 0x00000000FFFFF000
+	hellBitsIndexReset  hellBits = 0xFFFFFFFF00000FFF
 	hellBitsIndexStep   hellBits = 1 << 12
 
-	hellBitsHashFilter hellBits = 0xF000000000000000
-	hellBitsHashReset  hellBits = 0x0FFFFFFFFFFFFFFF
-	hellBitsHashStep   hellBits = 1 << 60
+	hellBitsDirtyFilter          = 0x000FFFFF00000000
+	hellBitsDirtyReset  hellBits = 0xFFF00000FFFFFFFF
+	hellBitsDirtyStep   hellBits = 1 << 32
+
+	hellBitsMapFilter hellBits = 0xFFF0000000000000
+	hellBitsMapReset  hellBits = 0x000FFFFFFFFFFFFF
+	hellBitsMapStep   hellBits = 1 << 52
 
 	hex = "0123456789abcdef"
 
@@ -62,9 +63,9 @@ const (
 
 var (
 	StartNodePoolSize = 128
-	HashSize          = 64
+	MapSize           = 64
 
-	nilHash = make([]*Node, 0, 0)
+	nilMap = make([]*Node, 0, 0)
 
 	decoderPool      = make([]*decoder, 0, 16)
 	decoderPoolIndex = -1
@@ -97,8 +98,8 @@ var (
 )
 
 func init() {
-	for i := 0; i < HashSize; i++ {
-		nilHash = append(nilHash, nil)
+	for i := 0; i < MapSize; i++ {
+		nilMap = append(nilMap, nil)
 	}
 
 	numbersMap['.'] = 1
@@ -217,16 +218,15 @@ func (d *decoder) decode(json string, shouldReset bool) (*Node, error) {
 
 	nodePool := d.nodePool
 	nodePoolLen := len(nodePool)
+
 	nodes := d.nodeCount
-
 	root := nodePool[nodes]
-	root.parent = nil
-	curNode := nodePool[nodes]
-	topNode := root.parent
 
-	c := byte('i') // i means insane
-	t := 0
-	x := 0
+	var (
+		curNode, topNode *Node
+		t, x             int
+		c                byte
+	)
 	goto decode
 decodeObject:
 	if o == l {
@@ -248,31 +248,30 @@ decodeObject:
 	}
 
 	if c == '}' {
-		curNode.next = nodePool[nodes]
-		curNode = curNode.next
-		nodes++
-
+		curNode = nodePool[nodes]
 		curNode.bits = hellBitObjectEnd
 		curNode.parent = topNode
-
-		topNode.next = nodePool[nodes]
+		if len(topNode.nodes) > 0 {
+			topNode.nodes[topNode.getMapEnd()].next.next = curNode
+		}
+		nodes++
+		curNode.next = nodePool[nodes]
 		topNode = topNode.parent
-
-		goto pop
+		goto next
 	}
 
-	if c != ',' {
-		if len(topNode.nodes) > 0 {
-			return nil, insaneErr(ErrExpectedComma, cp(json), o)
-		}
-		o--
-	} else {
+	if c == ',' {
 		if len(topNode.nodes) == 0 {
 			return nil, insaneErr(ErrExpectedObjectField, cp(json), o)
 		}
 		if o == l {
 			return nil, insaneErr(ErrUnexpectedJSONEnding, cp(json), o)
 		}
+	} else {
+		if len(topNode.nodes) > 0 {
+			return nil, insaneErr(ErrExpectedComma, cp(json), o)
+		}
+		o--
 	}
 
 	// skip wc
@@ -340,14 +339,13 @@ decodeObject:
 		return nil, insaneErr(ErrExpectedValue, cp(json), o)
 	}
 
-	curNode.next = nodePool[nodes]
-	curNode = curNode.next
-	nodes++
-
+	curNode = nodePool[nodes]
 	curNode.bits = hellBitEscapedField
 	curNode.data = json[t:o]
 	curNode.parent = topNode
-	topNode.fillHash(curNode)
+	nodes++
+	curNode.next = nodePool[nodes]
+	topNode.addField(curNode)
 
 	goto decode
 decodeArray:
@@ -369,17 +367,17 @@ decodeArray:
 	}
 
 	if c == ']' {
-		curNode.next = nodePool[nodes]
-		curNode = curNode.next
-		nodes++
-
+		curNode = nodePool[nodes]
 		curNode.bits = hellBitArrayEnd
 		curNode.parent = topNode
 
+		nodes++
+		curNode.next = nodePool[nodes]
 		topNode.next = nodePool[nodes]
+
 		topNode = topNode.parent
 
-		goto pop
+		goto next
 	}
 
 	if c != ',' {
@@ -417,16 +415,15 @@ decode:
 			return nil, insaneErr(ErrExpectedObjectField, cp(json), o)
 		}
 
-		curNode.next = nodePool[nodes]
-		curNode = curNode.next
-		nodes++
-
+		curNode = nodePool[nodes]
 		curNode.bits = hellBitObject
 		curNode.nodes = curNode.nodes[:0]
 		curNode.parent = topNode
+		nodes++
 
 		topNode = curNode
-		if nodes >= nodePoolLen-1 {
+
+		if nodes >= nodePoolLen-2 {
 			nodePool = d.expandPool()
 			nodePoolLen = len(nodePool)
 		}
@@ -435,16 +432,16 @@ decode:
 		if o == l {
 			return nil, insaneErr(ErrExpectedValue, cp(json), o)
 		}
-		curNode.next = nodePool[nodes]
-		curNode = curNode.next
-		nodes++
 
+		curNode = nodePool[nodes]
 		curNode.bits = hellBitArray
 		curNode.nodes = curNode.nodes[:0]
 		curNode.parent = topNode
+		nodes++
 
 		topNode = curNode
-		if nodes >= nodePoolLen-1 {
+
+		if nodes >= nodePoolLen-2 {
 			nodePool = d.expandPool()
 			nodePoolLen = len(nodePool)
 		}
@@ -471,13 +468,12 @@ decode:
 			}
 		}
 
-		curNode.next = nodePool[nodes]
-		curNode = curNode.next
-		nodes++
-
+		curNode = nodePool[nodes]
 		curNode.bits = hellBitEscapedString
 		curNode.data = json[o-1 : t]
 		curNode.parent = topNode
+		nodes++
+		curNode.next = nodePool[nodes]
 
 		o = t
 	case 't':
@@ -486,12 +482,12 @@ decode:
 		}
 		o += 3
 
-		curNode.next = nodePool[nodes]
-		curNode = curNode.next
-		nodes++
-
+		curNode = nodePool[nodes]
 		curNode.bits = hellBitTrue
 		curNode.parent = topNode
+
+		nodes++
+		curNode.next = nodePool[nodes]
 
 	case 'f':
 		if len(json) < o+4 || json[o:o+4] != "alse" {
@@ -499,12 +495,12 @@ decode:
 		}
 		o += 4
 
-		curNode.next = nodePool[nodes]
-		curNode = curNode.next
-		nodes++
-
+		curNode = nodePool[nodes]
 		curNode.bits = hellBitFalse
 		curNode.parent = topNode
+
+		nodes++
+		curNode.next = nodePool[nodes]
 
 	case 'n':
 		if len(json) < o+3 || json[o:o+3] != "ull" {
@@ -512,12 +508,12 @@ decode:
 		}
 		o += 3
 
-		curNode.next = nodePool[nodes]
-		curNode = curNode.next
-		nodes++
-
+		curNode = nodePool[nodes]
 		curNode.bits = hellBitNull
 		curNode.parent = topNode
+
+		nodes++
+		curNode.next = nodePool[nodes]
 	default:
 		o--
 		t = o
@@ -527,20 +523,20 @@ decode:
 			return nil, insaneErr(ErrExpectedValue, cp(json), o)
 		}
 
-		curNode.next = nodePool[nodes]
-		curNode = curNode.next
-		nodes++
-
+		curNode = nodePool[nodes]
 		curNode.bits = hellBitNumber
 		curNode.data = json[t:o]
 		curNode.parent = topNode
+
+		nodes++
+		curNode.next = nodePool[nodes]
 	}
-pop:
+next:
 	if topNode == nil {
 		goto exit
 	}
 
-	if nodes >= nodePoolLen-1 {
+	if nodes >= nodePoolLen-2 {
 		nodePool = d.expandPool()
 		nodePoolLen = len(nodePool)
 	}
@@ -569,7 +565,6 @@ exit:
 		}
 	}
 
-	root.next = nil
 	curNode.next = nil
 	d.nodeCount = nodes
 
@@ -610,7 +605,9 @@ func (n *Node) EncodeToString() string {
 // mem allocations may occur only if buffer isn't long enough
 // use it for performance
 func (n *Node) Encode(out []byte) []byte {
-	out = out[:0]
+	if n == nil {
+		return out
+	}
 	s := 0
 	curNode := n
 	topNode := n
@@ -637,7 +634,7 @@ encodeSkip:
 		}
 		topNode = curNode
 		out = append(out, '{')
-		curNode = curNode.nodes[curNode.getHashStart()]
+		curNode = curNode.nodes[MapSize]
 		if curNode.bits&hellBitField == hellBitField {
 			out = escapeString(out, curNode.data)
 			out = append(out, ':')
@@ -737,6 +734,10 @@ get:
 		return nil
 	}
 
+	if len(node.nodes) == 0 {
+		return nil
+	}
+
 	l = len(curField)
 	hash = hashOffset
 	for i := 0; i < l; i++ {
@@ -744,16 +745,17 @@ get:
 		hash *= hashPrime
 	}
 
-	index = int(hash % uint64(HashSize))
-
-	field = n.nodes[index]
+	index = int(hash % uint64(MapSize))
+	field = node.nodes[index]
 	if field == nil {
 		return nil
 	}
 
+	fmt.Println("---")
+	fmt.Println(curField)
+	fmt.Println("-for")
 	for {
-		fmt.Println(index)
-		fmt.Println(field.getIndex())
+		fmt.Println(field.AsString())
 		if field.getIndex() != index || field.bits&hellBitObjectEnd == hellBitObjectEnd {
 			return nil
 		}
@@ -820,56 +822,50 @@ func (n *Node) AddField(name string) *Node {
 		return node
 	}
 
-	newNull := &Node{}
-	newNull.bits = hellBitNull
-	newNull.parent = n
+	nullNode := n.getNode()
+	nullNode.bits = hellBitNull
+	nullNode.parent = n
 
-	newField := n.getNode()
-	newField.bits = hellBitField
-	newField.next = newNull
-	newField.parent = n
-	newField.data = name
+	fieldNode := n.getNode()
+	fieldNode.bits = hellBitField
+	fieldNode.next = nullNode
+	fieldNode.parent = n
+	fieldNode.data = name
 
-	l := len(n.nodes)
-	if l > 0 {
-		lastVal := (n.nodes)[l-1]
-		newNull.next = lastVal.next.next
-		lastVal.next.next = newField
-	} else {
-		// restore lost end
-		newEnd := n.getNode()
-		newEnd.bits = hellBitObjectEnd
-		newEnd.next = n.next
-		newEnd.parent = n
-		newNull.next = newEnd
-	}
-
-	n.fillHash(newField)
-
-	return newNull
+	return n.addField(fieldNode)
 }
 
-func (n *Node) fillHash(fieldNode *Node) {
+func (n *Node) addField(fieldNode *Node) *Node {
 	fieldNode.unescapeField()
-	s := fieldNode.data
-	l := len(s)
+	name := fieldNode.AsString()
+	l := len(name)
 	hash := hashOffset
 	for i := 0; i < l; i++ {
-		hash ^= uint64(s[i])
+		hash ^= uint64(name[i])
 		hash *= hashPrime
 	}
-
-	index := int(hash % uint64(HashSize))
-	n.setIndex(index)
+	index := int(hash % uint64(MapSize))
 
 	if len(n.nodes) == 0 {
-		n.setHashStart(index)
-		n.nodes = append(n.nodes, nilHash...)
+		n.nodes = append(n.nodes, nilMap...)
+		n.nodes = append(n.nodes, fieldNode)
+
+		n.nodes[index] = fieldNode
+		fieldNode.setIndex(index)
+		fieldNode.next.setIndex(index)
+		n.setMapEnd(index)
+
+		return fieldNode.next
 	}
 
-	if n.nodes[index] == nil {
-		n.nodes[index] = fieldNode
-	}
+	lastField := n.getMapEndNode()
+	n.nodes[index] = fieldNode
+	lastField.next.next = fieldNode
+	fieldNode.setIndex(index)
+	fieldNode.next.setIndex(index)
+	n.setMapEnd(index)
+
+	return fieldNode.next
 }
 
 func (n *Node) AddElement() *Node {
@@ -1050,7 +1046,7 @@ func (n *Node) Visit(fn func(*Node)) {
 
 }
 
-// MutateToNode it isn't safe function, if you create node cycle, encode() may freeze
+// MutateToNode it isn't safe function. If you create node cycle, Encode() may freeze
 func (n *Node) MutateToNode(node *Node) *Node {
 	if n == nil || node == nil {
 		return n
@@ -1108,7 +1104,7 @@ func (n *Node) MutateToInt(value int) *Node {
 		return n
 	}
 
-	n.bits = hellBitNumber
+	n.bits = n.bits&hellBitsTypeReset | hellBitNumber
 	n.data = strconv.Itoa(value)
 
 	return n
@@ -1119,7 +1115,7 @@ func (n *Node) MutateToFloat(value float64) *Node {
 		return n
 	}
 
-	n.bits = hellBitNumber
+	n.bits = n.bits&hellBitsTypeReset | hellBitNumber
 	n.data = strconv.FormatFloat(value, 'f', -1, 64)
 
 	return n
@@ -1131,9 +1127,9 @@ func (n *Node) MutateToBool(value bool) *Node {
 	}
 
 	if value {
-		n.bits = hellBitTrue
+		n.bits = n.bits&hellBitsTypeReset | hellBitTrue
 	} else {
-		n.bits = hellBitFalse
+		n.bits = n.bits&hellBitsTypeReset | hellBitFalse
 	}
 
 	return n
@@ -1144,7 +1140,7 @@ func (n *Node) MutateToNull(value bool) *Node {
 		return n
 	}
 
-	n.bits = hellBitNull
+	n.bits = n.bits&hellBitsTypeReset | hellBitNull
 
 	return n
 }
@@ -1154,7 +1150,7 @@ func (n *Node) MutateToString(value string) *Node {
 		return nil
 	}
 
-	n.bits = hellBitString
+	n.bits = n.bits&hellBitsTypeReset | hellBitString
 	n.data = value
 
 	return n
@@ -1165,7 +1161,7 @@ func (n *Node) MutateToEscapedString(value string) *Node {
 		return nil
 	}
 
-	n.bits = hellBitEscapedString
+	n.bits = n.bits&hellBitsTypeReset | hellBitEscapedString
 	n.data = value
 
 	return n
@@ -1176,7 +1172,7 @@ func (n *Node) MutateToObject() *Node {
 		return n
 	}
 
-	n.bits = hellBitObject
+	n.bits = n.bits&hellBitsTypeReset | hellBitObject
 	n.nodes = n.nodes[:0]
 
 	return n
@@ -1241,7 +1237,7 @@ func (n *StrictNode) AsArray() ([]*Node, error) {
 func (n *Node) unescapeStr() {
 	value := n.data
 	n.data = unescapeStr(value[1 : len(value)-1])
-	n.bits = hellBitString
+	n.bits = n.bits&hellBitsTypeReset | hellBitString
 }
 
 func (n *Node) unescapeField() {
@@ -1252,7 +1248,7 @@ func (n *Node) unescapeField() {
 	value := n.data
 	i := strings.LastIndexByte(value, '"')
 	n.data = unescapeStr(value[1:i])
-	n.bits = hellBitField
+	n.bits = n.bits&hellBitsTypeReset | hellBitField
 }
 
 func (n *Node) AsString() string {
@@ -1279,7 +1275,7 @@ func (n *Node) AsString() string {
 	case hellBitEscapedField:
 		panic("insane json really goes outta its mind")
 	default:
-		return ""
+		panic("insane json really goes outta its mind")
 	}
 }
 
@@ -1494,6 +1490,10 @@ func (n *Node) IsNil() bool {
 	return n == nil
 }
 
+func (n *Node) String() string {
+	return fmt.Sprintf("%s %p", n.TypeStr(), n)
+}
+
 func (n *Node) TypeStr() string {
 	if n == nil {
 		return "nil"
@@ -1501,13 +1501,13 @@ func (n *Node) TypeStr() string {
 
 	switch n.bits & hellBitsTypeFilter {
 	case hellBitObject:
-		return "hellBitObject"
+		return "object"
 	case hellBitObjectEnd:
-		return "hellBitObject end"
+		return "object end"
 	case hellBitArray:
-		return "hellBitArray"
+		return "array"
 	case hellBitArrayEnd:
-		return "hellBitArray end"
+		return "array end"
 	case hellBitField:
 		return "field"
 	case hellBitEscapedField:
@@ -1525,11 +1525,11 @@ func (n *Node) TypeStr() string {
 	case hellBitFalse:
 		return "false"
 	default:
-		return "unknown"
+		return fmt.Sprintf("unknown bits=%b", n.bits)
 	}
 }
 
-// todo how can we use root's decoder here? to avoid allocs?
+// todo: how can we use root's decoder here to avoid allocs?
 func (n *Node) getNode() *Node {
 	return &Node{}
 }
@@ -1542,12 +1542,16 @@ func (n *Node) getIndex() int {
 	return int((n.bits & hellBitsIndexFilter) / hellBitsIndexStep)
 }
 
-func (n *Node) setHashStart(index int) {
-	n.bits = (n.bits & hellBitsHashReset) + hellBits(index)*hellBitsHashStep
+func (n *Node) setMapEnd(index int) {
+	n.bits = (n.bits & hellBitsMapReset) + hellBits(index)*hellBitsMapStep
 }
 
-func (n *Node) getHashStart() int {
-	return int((n.bits & hellBitsHashFilter) / hellBitsHashStep)
+func (n *Node) getMapEnd() int {
+	return int((n.bits & hellBitsMapFilter) / hellBitsMapStep)
+}
+
+func (n *Node) getMapEndNode() *Node {
+	return n.nodes[n.getMapEnd()]
 }
 
 // ******************** //

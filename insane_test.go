@@ -12,6 +12,118 @@ const (
 	bigJSON = `{"_id":"5d57e438c48c6e5d4ca83b29","index":0,"guid":"ac784884-a6a3-4987-bb0f-d19e09462677","isActive":false,"balance":"$1,961.04","picture":"http://placehold.it/32x32","age":33,"eyeColor":"blue","name":"McleodMendez","gender":"male","compafny":"PARCOE","com1pany":"PARCOE","co2mpfany":"PARCOE","co222fmpany":"PARCOE","co222empany":"PARCOE","co2222fmpany":"PARCOE","co2222mpany":"PARCOE","compfany":"PARCOE","co2mpany":"PARCOE","compwfany":"PARCOE","compfweany":"PARCOE","comfwepany":"PARCOE","compefefany":"PARCOE","comfeqpany":"PARCOE","comfwefvwepany":"PARCOE","comvfqfqewfpany":"PARCOE","compweewany":"PARCOE","wff":"PARCOE","comqvvpany":"PARCOE","comvqwevpany":"PARCOE","compvany":"PARCOE","compvqeany":"PARCOE","compfanvy":"PARCOE","comspany":"PARCOE","compaany":"PARCOE","compaaqny":"PARCOE","compaqny":"PARCOE","_id1":"5d57e438c48c6e5d4ca83b29","index1":0,"guid1":"ac784884-a6a3-4987-bb0f-d19e09462677","isActive1":false,"balance1":"$1,961.04","picture1":"http://placehold.it/32x32","age1":33,"eyeColor1":"blue","name1":"McleodMendez","gender1":"male","compafny1":"PARCOE","com1pany1":"PARCOE","co2mpfany1":"PARCOE","co222fmpany1":"PARCOE","co222empany1":"PARCOE","co2222fmpany1":"PARCOE","co2222mpany1":"PARCOE","compfany1":"PARCOE","co2mpany1":"PARCOE","compwfany1":"PARCOE","compfweany1":"PARCOE","comfwepany1":"PARCOE","compefefany1":"PARCOE","comfeqpany1":"PARCOE","comfwefvwepany1":"PARCOE","comvfqfqewfpany1":"PARCOE","compweewany1":"PARCOE","wff1":"PARCOE","comqvvpany1":"PARCOE","comvqwevpany1":"PARCOE","compvany1":"PARCOE","compvqeany1":"PARCOE","compfanvy1":"PARCOE","comspany1":"PARCOE","compaany1":"PARCOE","compaaqny1":"PARCOE","compaqny1":"PARCOE"}`
 )
 
+func TestDecodeErr(t *testing.T) {
+	tests := []struct {
+		json string
+		err  error
+	}{
+		// ok
+		{json: `0`, err: nil},
+		{json: `1.0`, err: nil},
+		{json: `"string"`, err: nil},
+		{json: `true`, err: nil},
+		{json: `false`, err: nil},
+		{json: `null`, err: nil},
+		{json: `{}`, err: nil},
+		{json: `[]`, err: nil},
+		{json: `[[	],0]`, err: nil},
+		{json: `{"":{"l":[30]},"c":""}`, err: nil},
+		{json: `{"a":{"6":"5","l":[3,4]},"c":"d"}`, err: nil},
+
+		// common
+		{json: ``, err: ErrEmptyJSON},
+		{json: `"`, err: ErrUnexpectedEndOfString},
+		{json: `l`, err: ErrExpectedValue},
+		{json: `t`, err: ErrUnexpectedEndOfTrue},
+		{json: `f`, err: ErrUnexpectedEndOfFalse},
+		{json: `n`, err: ErrUnexpectedEndOfNull},
+
+		// array
+		{json: `[`, err: ErrExpectedValue},
+		{json: `[ `, err: ErrExpectedValue},
+		{json: `[ "`, err: ErrUnexpectedEndOfString},
+		{json: `[ t`, err: ErrUnexpectedEndOfTrue},
+		{json: `[ f`, err: ErrUnexpectedEndOfFalse},
+		{json: `[ n`, err: ErrUnexpectedEndOfNull},
+		{json: `[[0`, err: ErrUnexpectedJSONEnding},
+		{json: `[,`, err: ErrExpectedValue},
+		{json: `[e[]00]`, err: ErrExpectedComma},
+		{json: `[,e[]00]`, err: ErrExpectedValue},
+
+		// flagObject
+		{json: ` {`, err: ErrExpectedObjectField},
+		{json: `{`, err: ErrExpectedObjectField},
+		{json: `{ `, err: ErrExpectedObjectField},
+		{json: `{ f`, err: ErrExpectedObjectField},
+		{json: `{{`, err: ErrExpectedObjectField},
+		{json: `{"`, err: ErrUnexpectedEndOfObjectField},
+		{json: `{l`, err: ErrExpectedObjectField},
+		{json: `{ l`, err: ErrExpectedObjectField},
+		{json: `{""`, err: ErrExpectedObjectFieldSeparator},
+		{json: `{""  `, err: ErrExpectedObjectFieldSeparator},
+		{json: `{"":`, err: ErrExpectedValue},
+		{json: `{"": `, err: ErrExpectedValue},
+		{json: `{"" :`, err: ErrExpectedValue},
+		{json: `{"":"`, err: ErrUnexpectedEndOfString},
+		{json: `{"": "`, err: ErrUnexpectedEndOfString},
+		{json: `{"":0`, err: ErrUnexpectedJSONEnding},
+		{json: `{,`, err: ErrExpectedObjectField},
+		{json: `{"":0[]00[]00]`, err: ErrExpectedComma},
+		{json: `{"":0""[]00[]00]`, err: ErrExpectedComma},
+		{json: `{,"":0""[]00[]00]`, err: ErrExpectedObjectField},
+
+		// endings
+		{json: `1.0jjj`, err: ErrUnexpectedJSONEnding},
+		{json: `{}}`, err: ErrUnexpectedJSONEnding},
+		{json: `[].`, err: ErrUnexpectedJSONEnding},
+		{json: `"sssss".`, err: ErrUnexpectedJSONEnding},
+		{json: `truetrue.`, err: ErrUnexpectedJSONEnding},
+		{json: `falsenull`, err: ErrUnexpectedJSONEnding},
+		{json: `null:`, err: ErrUnexpectedJSONEnding},
+	}
+
+	for _, test := range tests {
+		root, err := DecodeString(test.json)
+		if test.err != nil {
+			assert.NotNil(t, err, "where should be an error decoding %s", test.json)
+			assert.True(t, strings.Contains(err.Error(), test.err.Error()), "wrong err %s, expected=%s, got=%s", test.json, test.err.Error(), err.Error())
+		} else {
+			assert.NoError(t, err, "where shouldn't be an error %s", test.json)
+			root.EncodeToByte()
+		}
+		Release(root)
+	}
+}
+
+func TestDigNode(t *testing.T) {
+	tests := []struct {
+		json   string
+		dig    []string
+		result string
+	}{
+		// ok
+		//{json: `{"a":"b"}`, dig: []string{"a"}, result: "b"},
+		//{json: `{"":""}`, dig: []string{""}, result: ""},
+		//{json: `{"1":{"2":{"3":{"4":"5","_4":"_5"},"_3":"_3"},"_2":"_2"},"_1":"_1"}`, dig: []string{"1", "2", "3", "4"}, result: "5"},
+		//{json: `{"1":{"2":{"3":{"4":"5"}}}}`, dig: []string{"1", "2", "3", "4"}, result: "5"},
+		//{json: bigJSON, dig: []string{"_id"}, result: "5d57e438c48c6e5d4ca83b29"},
+		{json: string(getFile("heavy")), dig: []string{"second", "third"}, result: "ok"},
+
+		// not ok
+		{json: `["first","second","third"]`, dig: []string{"fourth"}, result: ""},
+	}
+
+	for _, test := range tests {
+		root, err := DecodeString(test.json)
+
+		assert.NoError(t, err, "error while decoding")
+		assert.NotNil(t, root, "node shouldn't be nil")
+
+		assert.Equal(t, test.result, root.Dig(test.dig...).AsString(), "wrong dig result")
+		Release(root)
+	}
+}
+
 func TestDecodeLight(t *testing.T) {
 	json := `{"_id":"5d53006246df0b962b787d11","index":"0","guid":"80d75945-6251-46a2-b6c9-a10094beed6e","isActive":"false","balance":"$2,258.24","picture":"http://placehold.it/32x32","age":"34","eyeColor":"brown","company":"NIMON","email":"anne.everett@nimon.name","phone":"+1(946)560-2227","address":"815EmpireBoulevard,Blue,Nevada,5617","about":"Proidentoccaecateulaborislaboreofficialaborumvelitanimnulla.Laboreametoccaecataliquaminimlaboreadenimdolorelaborum.Eiusmodesseeiusmodaliquacillumullamcodonisivelitesseincididunt.Ininestessereprehenderitirureaniminsit.","registered":"Friday,May27,20165:05AM","latitude":"-5.922381","longitude":"-49.143968","greeting":"Hello,Anne!Youhave7unreadmessages.","favoriteFruit":"banana"}`
 	root, err := DecodeString(json)
@@ -31,9 +143,8 @@ func TestDecodeNumber(t *testing.T) {
 	assert.NotNil(t, root, "node shouldn't be nil")
 
 	assert.Equal(t, 100, root.Dig("first").AsInt(), "wrong node value")
-	//assert.Equal(t, 1e20, root.Dig("second").AsFloat(), "wrong node value")
+	assert.Equal(t, 1e20, root.Dig("second").AsFloat(), "wrong node value")
 }
-
 
 func TestDecodeQuote(t *testing.T) {
 	json := `{"log":"{\"ts\":\"2019-10-04T15:54:22.312412503Z\",\"service\":\"oms-go-broker\",\"message\":\"\\u003e0\\","stream":"stdout","time":"2019-10-04T15:54:22.313584867Z"}`
@@ -147,90 +258,6 @@ func TestDecodeTrueFalseNull(t *testing.T) {
 	assert.Equal(t, true, root.Dig("null").IsNull(), "wrong node value")
 }
 
-func TestDecodeErr(t *testing.T) {
-	tests := []struct {
-		json string
-		err  error
-	}{
-		// common
-		{json: ``, err: ErrEmptyJSON},
-		{json: `"`, err: ErrUnexpectedEndOfString},
-		{json: `l`, err: ErrExpectedValue},
-		{json: `t`, err: ErrUnexpectedEndOfTrue},
-		{json: `f`, err: ErrUnexpectedEndOfFalse},
-		{json: `n`, err: ErrUnexpectedEndOfNull},
-
-		// array
-		{json: `[`, err: ErrExpectedValue},
-		{json: `[ `, err: ErrExpectedValue},
-		{json: `[ "`, err: ErrUnexpectedEndOfString},
-		{json: `[ t`, err: ErrUnexpectedEndOfTrue},
-		{json: `[ f`, err: ErrUnexpectedEndOfFalse},
-		{json: `[ n`, err: ErrUnexpectedEndOfNull},
-		{json: `[[0`, err: ErrUnexpectedJSONEnding},
-		{json: `[,`, err: ErrExpectedValue},
-		{json: `[e[]00]`, err: ErrExpectedComma},
-		{json: `[,e[]00]`, err: ErrExpectedValue},
-
-		// flagObject
-		{json: ` {`, err: ErrExpectedObjectField},
-		{json: `{`, err: ErrExpectedObjectField},
-		{json: `{ `, err: ErrExpectedObjectField},
-		{json: `{ f`, err: ErrExpectedObjectField},
-		{json: `{{`, err: ErrExpectedObjectField},
-		{json: `{"`, err: ErrUnexpectedEndOfObjectField},
-		{json: `{l`, err: ErrExpectedObjectField},
-		{json: `{ l`, err: ErrExpectedObjectField},
-		{json: `{""`, err: ErrExpectedObjectFieldSeparator},
-		{json: `{""  `, err: ErrExpectedObjectFieldSeparator},
-		{json: `{"":`, err: ErrExpectedValue},
-		{json: `{"": `, err: ErrExpectedValue},
-		{json: `{"" :`, err: ErrExpectedValue},
-		{json: `{"":"`, err: ErrUnexpectedEndOfString},
-		{json: `{"": "`, err: ErrUnexpectedEndOfString},
-		{json: `{"":0`, err: ErrUnexpectedJSONEnding},
-		{json: `{,`, err: ErrExpectedObjectField},
-		{json: `{"":0[]00[]00]`, err: ErrExpectedComma},
-		{json: `{"":0""[]00[]00]`, err: ErrExpectedComma},
-		{json: `{,"":0""[]00[]00]`, err: ErrExpectedObjectField},
-
-		// endings
-		{json: `1.0jjj`, err: ErrUnexpectedJSONEnding},
-		{json: `{}}`, err: ErrUnexpectedJSONEnding},
-		{json: `[].`, err: ErrUnexpectedJSONEnding},
-		{json: `"sssss".`, err: ErrUnexpectedJSONEnding},
-		{json: `truetrue.`, err: ErrUnexpectedJSONEnding},
-		{json: `falsenull`, err: ErrUnexpectedJSONEnding},
-		{json: `null:`, err: ErrUnexpectedJSONEnding},
-
-
-		// ok
-		{json: `0`, err: nil},
-		{json: `1.0`, err: nil},
-		{json: `"string"`, err: nil},
-		{json: `true`, err: nil},
-		{json: `false`, err: nil},
-		{json: `null`, err: nil},
-		{json: `{}`, err: nil},
-		{json: `[]`, err: nil},
-		{json: `[[	],0]`, err: nil},
-		{json: `{"":{"l":[30]},"c":""}`, err: nil},
-		{json: `{"a":{"6":"5","l":[3,4]},"c":"d"}`, err: nil},
-	}
-
-	for _, test := range tests {
-		root, err := DecodeString(test.json)
-		if test.err != nil {
-			assert.NotNil(t, err, "where should be an error decoding %s", test.json)
-			assert.True(t, strings.Contains(err.Error(), test.err.Error()), "wrong err %s, expected=%s, got=%s", test.json, test.err.Error(), err.Error())
-		} else {
-			assert.NoError(t, err, "where shouldn't be an error %s", test.json)
-			root.EncodeToByte()
-		}
-		Release(root)
-	}
-}
-
 func TestEncode(t *testing.T) {
 	json := `{"key_a":{"key_a_a":["v1","vv1"],"key_a_b":[],"key_a_c":"v3"},"key_b":{"key_b_a":["v3","v31"],"key_b_b":{}}}`
 	root, err := DecodeString(json)
@@ -270,61 +297,18 @@ func TestField(t *testing.T) {
 	assert.Equal(t, json, root.EncodeToString(), "wrong encoding")
 }
 
-func TestInsane(t *testing.T) {
-	test := loadJSON("insane", [][]string{})
-
-	root, err := DecodeBytes(test.json)
-	defer Release(root)
-
-	assert.NoError(t, err, "error while decoding")
-	assert.NotNil(t, root, "node shouldn't be nil")
-
-	encoded := root.EncodeToByte()
-	assert.Equal(t, 465158, len(encoded), "wrong encoding")
-}
-
-func TestDig(t *testing.T) {
-	root, err := DecodeString(bigJSON)
-	defer Release(root)
-
-	assert.NoError(t, err, "error while decoding")
-	assert.NotNil(t, root, "node shouldn't be nil")
-
-	assert.Equal(t, "ac784884-a6a3-4987-bb0f-d19e09462677", root.Dig("guid").AsString(), "wrong encoding")
-}
-
-func TestDigEmpty(t *testing.T) {
-	root, err := DecodeString(`{"":""}`)
-	defer Release(root)
-
-	assert.NoError(t, err, "error while decoding")
-	assert.NotNil(t, root, "node shouldn't be nil")
-
-	assert.Equal(t, "", root.Dig("").AsString(), "wrong node value")
-}
-
-func TestDigDeep(t *testing.T) {
-	test := loadJSON("heavy", [][]string{})
-
-	root, err := DecodeBytes(test.json)
-	defer Release(root)
-
-	assert.NoError(t, err, "error while decoding")
-	assert.NotNil(t, root, "node shouldn't be nil")
-
-	value := root.Dig("first", "second", "third", "fourth", "fifth", "ok")
-	assert.NotNil(t, value, "Can't find field")
-	assert.Equal(t, "ok", value.AsString(), "wrong encoding")
-}
-
-func TestDigNil(t *testing.T) {
-	json := `["first","second","third"]`
-	root, _ := DecodeString(json)
-	defer Release(root)
-
-	value := root.Dig("one", "$f_8)9").AsString()
-	assert.Equal(t, "", value, "wrong array element value")
-}
+//func TestInsane(t *testing.T) {
+//	test := getWorkload("insane", [][]string{})
+//
+//	root, err := DecodeBytes(test.json)
+//	defer Release(root)
+//
+//	assert.NoError(t, err, "error while decoding")
+//	assert.NotNil(t, root, "node shouldn't be nil")
+//
+//	encoded := root.EncodeToByte()
+//	assert.Equal(t, 465158, len(encoded), "wrong encoding")
+//}
 
 func TestAddField(t *testing.T) {
 	tests := []struct {
@@ -985,8 +969,8 @@ func TestIndex(t *testing.T) {
 func TestHashStart(t *testing.T) {
 	node := Node{}
 
-	index := 5
-	node.setHashStart(5)
+	index := 37
+	node.setMapEnd(37)
 
-	assert.Equal(t, index, node.getHashStart(), "wrong index")
+	assert.Equal(t, index, int(node.getMapEnd()), "wrong index")
 }
