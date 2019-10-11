@@ -301,18 +301,18 @@ func TestField(t *testing.T) {
 	assert.Equal(t, json, root.EncodeToString(), "wrong encoding")
 }
 
-//func TestInsane(t *testing.T) {
-//	test := getWorkload("insane", [][]string{})
-//
-//	root, err := DecodeBytes(test.json)
-//	defer Release(root)
-//
-//	assert.NoError(t, err, "error while decoding")
-//	assert.NotNil(t, root, "node shouldn't be nil")
-//
-//	encoded := root.EncodeToByte()
-//	assert.Equal(t, 465158, len(encoded), "wrong encoding")
-//}
+func TestInsane(t *testing.T) {
+	test := getWorkload("insane", [][]string{})
+
+	root, err := DecodeBytes(test.json)
+	defer Release(root)
+
+	assert.NoError(t, err, "error while decoding")
+	assert.NotNil(t, root, "node shouldn't be nil")
+
+	encoded := root.EncodeToByte()
+	assert.Equal(t, 465158, len(encoded), "wrong encoding")
+}
 
 func TestAddField(t *testing.T) {
 	tests := []struct {
@@ -346,13 +346,13 @@ func TestAddElement(t *testing.T) {
 		count  int
 		result string
 	}{
-		//{json: `[]`, count: 1, result: `[null]`},
-		//{json: `[]`, count: 3, result: `[null,null,null]`},
-		//{json: `[]`, count: 4, result: `[null,null,null,null]`},
-		//{json: `["a"]`, count: 3, result: `["a",null,null,null]`},
-		//{json: `["a","a"]`, count: 3, result: `["a","a",null,null,null]`},
+		{json: `[]`, count: 1, result: `[null]`},
+		{json: `[]`, count: 3, result: `[null,null,null]`},
+		{json: `[]`, count: 4, result: `[null,null,null,null]`},
+		{json: `["a"]`, count: 3, result: `["a",null,null,null]`},
+		{json: `["a","a"]`, count: 3, result: `["a","a",null,null,null]`},
 		{json: `[{"a":"a"}]`, count: 3, result: `[{"a":"a"},null,null,null]`},
-		//{json: `[["a","a"]]`, count: 3, result: `[["a","a"],null,null,null]`},
+		{json: `[["a","a"]]`, count: 3, result: `[["a","a"],null,null,null]`},
 	}
 
 	for _, test := range tests {
@@ -445,6 +445,29 @@ func TestInsertElement(t *testing.T) {
 //	}
 //}
 
+func TestVisit(t *testing.T) {
+	tests := []struct {
+		json    string
+		results []string
+	}{
+		{json: `{"a":"1"}`, results: []string{"a"}},
+		{json: `{"a":"1","b":"2"}`, results: []string{"a", "b"}},
+		{json: `["1", "2"]`, results: []string{"1", "2"}},
+	}
+
+	results := make([]string, 0, 0)
+	for _, test := range tests {
+		root, err := DecodeString(test.json)
+		assert.NoError(t, err, "err should be nil")
+		results = results[:0]
+		root.Visit(func(node *Node) {
+			results = append(results, node.AsString())
+		})
+		assert.EqualValues(t, test.results, results, "wrong results")
+		Release(root)
+	}
+}
+
 func TestArraySuicide(t *testing.T) {
 	tests := []string{
 		`[]`,
@@ -482,6 +505,8 @@ func TestArraySuicide(t *testing.T) {
 func TestObjectSuicide(t *testing.T) {
 	tests := []string{
 		`{}`,
+		`{"1":{}}`,
+		`{"a":"b"}`,
 		`{"0":"0","1":"1","2":"2","3":"3"}`,
 		`{"1":{},"2":{},"3":{},"4":{}}`,
 		`{"1":{"1":"1"},"2":{"1":"1"},"3":{"1":"1"},"4":{"1":"1"}}`,
@@ -502,60 +527,52 @@ func TestObjectSuicide(t *testing.T) {
 		assert.Equal(t, `{}`, root.EncodeToString(), "array should be empty")
 		Release(root)
 
-		root, err = DecodeString(json)
-		assert.NoError(t, err, "err should be nil")
-
-		nodes := make([]*Node, 0, 0, )
-		root.Visit(func(node *Node) {
-			nodes = append(nodes, node)
-		})
-		l := len(nodes)
-		for i := range nodes {
-			root.Dig(nodes[l-i-1].AsString()).Suicide()
-		}
-		for _, field := range nodes {
-			root.Dig(field.AsString()).Suicide()
-		}
-		assert.Equal(t, 0, len(root.AsArray()), "array should be empty")
-		assert.Equal(t, `{}`, root.EncodeToString(), "array should be empty")
-		Release(root)
+		//root, err = DecodeString(json)
+		//assert.NoError(t, err, "err should be nil")
+		//
+		//nodes := make([]*Node, 0, 0, )
+		//root.Visit(func(node *Node) {
+		//	nodes = append(nodes, node)
+		//})
+		//l := len(nodes)
+		//for i := range nodes {
+		//	root.Dig(nodes[l-i-1].AsString()).Suicide()
+		//}
+		//for _, field := range nodes {
+		//	root.Dig(field.AsString()).Suicide()
+		//}
+		//assert.Equal(t, `{}`, root.EncodeToString(), "object should be empty")
+		//Release(root)
 	}
 }
 
 func TestMergeWith(t *testing.T) {
-	jsonA := `{"1":"1","2":"2"}`
-	root, err := DecodeString(jsonA)
-	defer Release(root)
+	tests := []struct {
+		a      string
+		b      string
+		result string
+	}{
+		{a: `{}`, b: `{"1":"1"}`, result: `{"1":"1"}`},
+		{a: `{"1":"1","2":"2"}`, b: `{"1":"2","3":"3","4":"4"}`, result: `{"1":"2","2":"2","3":"3","4":"4"}`},
+		{a: `{"1":{"1":"1"}}`, b: `{"1":1,"2":{"2":"2"}}`, result: `{"1":1,"2":{"2":"2"}}`},
+	}
 
-	assert.NotNil(t, root, "node shouldn't be nil")
-	assert.NoError(t, err, "error while decoding")
+	for _, test := range tests {
+		root, err := DecodeString(test.a)
 
-	jsonB := `{"1":"1","3":"3","4":"4"}`
-	node, err := root.DecodeStringAdditional(jsonB)
-	assert.NoError(t, err, "error while decoding")
-	assert.NotNil(t, node, "node shouldn't be nil")
+		assert.NotNil(t, root, "node shouldn't be nil")
+		assert.NoError(t, err, "error while decoding")
 
-	root.MergeWith(node)
+		node, err := root.DecodeStringAdditional(test.b)
+		assert.NoError(t, err, "error while decoding")
+		assert.NotNil(t, node, "node shouldn't be nil")
 
-	assert.Equal(t, `{"1":"1","2":"2","3":"3","4":"4"}`, root.EncodeToString(), "wrong first node")
-}
+		root.MergeWith(node)
 
-func TestMergeWithComplex(t *testing.T) {
-	jsonA := `{"1":{"1":"1"}}`
-	root, err := DecodeString(jsonA)
-	defer Release(root)
+		assert.Equal(t, test.result, root.EncodeToString(), "wrong first node")
 
-	assert.NotNil(t, root, "node shouldn't be nil")
-	assert.NoError(t, err, "error while decoding")
-
-	jsonB := `{"1":1,"2":{"2":"2"}}`
-	node, err := root.DecodeStringAdditional(jsonB)
-	assert.NoError(t, err, "error while decoding")
-	assert.NotNil(t, node, "node shouldn't be nil")
-
-	root.MergeWith(node)
-
-	assert.Equal(t, `{"1":1,"2":{"2":"2"}}`, root.EncodeToString(), "wrong first node")
+		Release(root)
+	}
 }
 
 func TestMutateToJSON(t *testing.T) {
@@ -798,6 +815,7 @@ func TestMutateToString(t *testing.T) {
 func TestMutateToField(t *testing.T) {
 	jsons := []string{
 		`{"unique":"some_val"}`,
+		`{"a":"a","unique":"some_val"}`,
 		`{"a":"a","b":"b","c":"c","x1":"x1","a1":"a1","b1":"b1","c1":"c1","x2":"x2","a2":"a2","b2":"b2","c2":"c2","x12":"x12","a12":"a12","b12":"b12","c12":"c12","a121":"a121","b121":"b121","c121":"c121","unique":"some_val"}`,
 	}
 
@@ -894,16 +912,16 @@ func TestObjectManyFieldsAddSuicide(t *testing.T) {
 }
 
 func TestObjectFields(t *testing.T) {
-	json := `{"first": "1","second":"2","third":"3"}`
+	json := `{"first":"1","second":"2","third":"3"}`
 	root, err := DecodeString(json)
 	defer Release(root)
 
 	assert.NoError(t, err, "error while decoding")
 	assert.NotNil(t, root, "node shouldn't be nil")
 
-	assert.Equal(t, `first`, root.Dig("first").AsString(), "wrong field name")
-	assert.Equal(t, `second`, root.Dig("second").AsString(), "wrong field name")
-	assert.Equal(t, `third`, root.Dig("third").AsString(), "wrong field name")
+	assert.Equal(t, `1`, root.Dig("first").AsString(), "wrong field name")
+	assert.Equal(t, `2`, root.Dig("second").AsString(), "wrong field name")
+	assert.Equal(t, `3`, root.Dig("third").AsString(), "wrong field name")
 }
 
 func TestParseInt64(t *testing.T) {

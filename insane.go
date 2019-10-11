@@ -221,6 +221,7 @@ func (d *decoder) decode(json string, shouldReset bool) (*Node, error) {
 
 	nodes := d.nodeCount
 	root := nodePool[nodes]
+	root.bits = 0
 
 	var (
 		curNode, topNode *Node
@@ -342,6 +343,7 @@ decodeObject:
 	curNode.data = json[t:o]
 	nodes++
 	curNode.next = nodePool[nodes]
+	curNode.next.bits = 0
 	topNode.addField(curNode)
 
 	goto decode
@@ -391,7 +393,9 @@ decodeArray:
 		}
 	}
 
+	nodePool[nodes].bits = 0
 	topNode.nodes = append(topNode.nodes, nodePool[nodes])
+
 decode:
 	// skip wc
 	c = json[o]
@@ -413,7 +417,7 @@ decode:
 		}
 
 		curNode = nodePool[nodes]
-		curNode.bits = hellBitObject
+		curNode.bits |= hellBitObject
 		curNode.nodes = curNode.nodes[:0]
 		curNode.parent = topNode
 		nodes++
@@ -431,7 +435,7 @@ decode:
 		}
 
 		curNode = nodePool[nodes]
-		curNode.bits = hellBitArray
+		curNode.bits |= hellBitArray
 		curNode.nodes = curNode.nodes[:0]
 		curNode.parent = topNode
 		nodes++
@@ -466,7 +470,7 @@ decode:
 		}
 
 		curNode = nodePool[nodes]
-		curNode.bits = hellBitEscapedString
+		curNode.bits |= hellBitEscapedString
 		curNode.data = json[o-1 : t]
 		curNode.parent = topNode
 		nodes++
@@ -480,7 +484,7 @@ decode:
 		o += 3
 
 		curNode = nodePool[nodes]
-		curNode.bits = hellBitTrue
+		curNode.bits |= hellBitTrue
 		curNode.parent = topNode
 
 		nodes++
@@ -493,7 +497,7 @@ decode:
 		o += 4
 
 		curNode = nodePool[nodes]
-		curNode.bits = hellBitFalse
+		curNode.bits |= hellBitFalse
 		curNode.parent = topNode
 
 		nodes++
@@ -506,7 +510,7 @@ decode:
 		o += 3
 
 		curNode = nodePool[nodes]
-		curNode.bits = hellBitNull
+		curNode.bits |= hellBitNull
 		curNode.parent = topNode
 
 		nodes++
@@ -521,7 +525,7 @@ decode:
 		}
 
 		curNode = nodePool[nodes]
-		curNode.bits = hellBitNumber
+		curNode.bits |= hellBitNumber
 		curNode.data = json[t:o]
 		curNode.parent = topNode
 
@@ -707,6 +711,19 @@ popSkip:
 
 // Dig legendary insane dig function
 func (n *Node) Dig(path ...string) *Node {
+	result := n.dig(path...)
+	if result == nil {
+		return nil
+	}
+
+	if result.bits&hellBitField == hellBitField {
+		return result.next
+	}
+
+	return result
+}
+
+func (n *Node) dig(path ...string) *Node {
 	if n == nil {
 		return nil
 	}
@@ -751,10 +768,7 @@ get:
 		if field.data == curField {
 			curDepth++
 			if curDepth == maxDepth {
-				result := field.next
-				result.bits = result.bits&hellBitsDirtyReset | (node.bits & hellBitsDirtyFilter)
-
-				return result
+				return field
 			}
 			curField = path[curDepth]
 			node = field.next
@@ -849,11 +863,12 @@ func (n *Node) addField(fieldNode *Node) *Node {
 	} else {
 		endIndex := n.getMapEnd()
 		lastField := n.nodes[endIndex]
-		fieldNode.setIndex(endIndex) // index to bucket to previous field
-		fieldNode.next.setIndex(index) // index to bucket to self
 		fieldNode.next.next = lastField.next.next
 		lastField.next.next = fieldNode
+		fieldNode.setIndex(endIndex) // index to bucket to previous field
 	}
+
+	fieldNode.next.setIndex(index) // index to bucket to self
 
 	if n.nodes[index] == nil {
 		fieldNode.parent = nil
@@ -944,38 +959,69 @@ func (n *Node) Suicide() {
 		return
 	}
 
-	owner := n.parent
+	if n.bits&hellBitField == hellBitField {
+		n = n.next
+	}
 
+	owner := n.parent
 	// root is immortal, sorry
 	if owner == nil {
 		return
 	}
-
-	delIndex := n.actualizeIndex()
-	// already deleted?
-	if delIndex == -1 {
-		return
-	}
-
-	// mark owner as dirty
-	owner.bits += hellBitsDirtyStep
 
 	switch owner.bits & hellBitsTypeFilter {
 	case hellBitObject:
 		if len(owner.nodes) == 0 {
 			return
 		}
-		node := owner.nodes[n.getIndex()]
-		prev := node
-		field := node
-		for node != nil {
-			if node.next == n
+		// delete from map nodes
+		selfField := owner.nodes[n.getIndex()]
+		prev := selfField
+		for selfField != nil {
+			if selfField.next == n {
+				break
+			}
+			prev = selfField
+			selfField = selfField.parent
 		}
-		if n.parent == nil {
+		if selfField == nil {
+			panic("insane json really goes outta its mind")
+		}
 
+		if prev == selfField {
+			owner.nodes[n.getIndex()] = selfField.parent
+		} else {
+			prev.parent = selfField.parent
 		}
-		//todo make it works
+
+		// delete from all nodes
+		prevField := owner.nodes[selfField.getIndex()]
+		for prevField != nil {
+			if prevField.next.next == selfField {
+				break
+			}
+			prevField = prevField.parent
+		}
+		if prevField != nil {
+			prevField.next.next = selfField.next.next
+
+			if selfField.parent == nil && n.getIndex() == owner.getMapEnd() {
+				owner.setMapEnd(prevField.next.getIndex())
+			}
+		} else {
+			owner.nodes = owner.nodes[:0]
+		}
+
 	case hellBitArray:
+		delIndex := n.actualizeIndex()
+		// already deleted?
+		if delIndex == -1 {
+			return
+		}
+
+		// mark owner as dirty
+		owner.bits += hellBitsDirtyStep
+
 		if delIndex != 0 {
 			owner.nodes[delIndex-1].next = n.next
 		}
@@ -1012,22 +1058,18 @@ func (n *Node) findSelf() int {
 		return -1
 	}
 
+	if owner.bits&hellBitArray != hellBitArray {
+		return -1
+	}
+
 	index := -1
-	if owner.bits&hellBitArray == hellBitArray {
-		for i, node := range owner.nodes {
-			if node == n {
-				index = i
-				break
-			}
-		}
-	} else {
-		for i, node := range owner.nodes {
-			if node.next == n {
-				index = i
-				break
-			}
+	for i, node := range owner.nodes {
+		if node == n {
+			index = i
+			break
 		}
 	}
+
 	return index
 }
 
@@ -1043,18 +1085,38 @@ func (n *Node) MergeWith(node *Node) *Node {
 		return n
 	}
 
-	for _, child := range node.nodes {
+	node.Visit(func(child *Node) {
 		child.unescapeField()
 		childField := child.AsString()
 		x := n.AddField(childField)
 		x.MutateToNode(child.next)
-	}
+	})
 
 	return n
 }
 
 func (n *Node) Visit(fn func(*Node)) {
+	if n == nil {
+		return
+	}
 
+	if n.bits&hellBitObject == hellBitObject {
+		nodes := n.nodes
+		l := len(nodes)
+		if l == 0 {
+			return
+		}
+		node := nodes[l-1]
+		for node.bits&hellBitObjectEnd != hellBitObjectEnd {
+			fn(node)
+			node = node.next.next
+		}
+	}
+	if n.bits&hellBitArray == hellBitArray {
+		for _, node := range n.nodes {
+			fn(node)
+		}
+	}
 }
 
 // MutateToNode it isn't safe function. If you create node cycle, Encode() may freeze
@@ -1065,14 +1127,19 @@ func (n *Node) MutateToNode(node *Node) *Node {
 
 	n.bits = node.bits
 	n.data = node.data
+
 	if node.bits&hellBitObject == hellBitObject || node.bits&hellBitArray == hellBitArray {
 		n.nodes = append((n.nodes)[:0], node.nodes...)
-		node.Visit(func(child *Node) {
-			child.parent = n
-			if child.bits&hellBitField == hellBitField || child.bits&hellBitEscapedField == hellBitEscapedField {
+		if n.bits&hellBitObject == hellBitObject {
+			node.Visit(func(child *Node) {
+				child.parent = n
 				child.next.parent = n
-			}
-		})
+			})
+		} else {
+			node.Visit(func(child *Node) {
+				child.parent = n
+			})
+		}
 	}
 
 	return n
@@ -1102,9 +1169,10 @@ func (n *Node) MutateToField(newFieldName string) *Node {
 		return n
 	}
 
-	parent := n.parent
 	value := n.next
+	parent := value.parent
 	value.Suicide()
+
 	parent.AddField(newFieldName).MutateToNode(value)
 
 	return n
@@ -1201,13 +1269,12 @@ func (n *Node) DigField(path ...string) *Node {
 		return nil
 	}
 
-	node := n.Dig(path...)
-	if node == nil {
+	node := n.dig(path...)
+	if node.bits&hellBitField != hellBitField {
 		return nil
 	}
 
-	//todo: fix hash
-	return n.nodes[node.getIndex()]
+	return node
 }
 
 func (n *Node) AsFieldValue() *Node {
@@ -1270,6 +1337,10 @@ func (n *Node) AsString() string {
 	switch n.bits & hellBitsTypeFilter {
 	case hellBitString:
 		return n.data
+	case hellBitObject:
+		return "object"
+	case hellBitArray:
+		return "array"
 	case hellBitEscapedString:
 		n.unescapeStr()
 		return n.data
@@ -1502,7 +1573,11 @@ func (n *Node) IsNil() bool {
 }
 
 func (n *Node) String() string {
-	return fmt.Sprintf("%s %p", n.TypeStr(), n)
+	val := ""
+	if n != nil {
+		val = n.AsString()
+	}
+	return fmt.Sprintf("%s %p %s", n.TypeStr(), n, val)
 }
 
 func (n *Node) TypeStr() string {
