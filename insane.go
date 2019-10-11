@@ -720,6 +720,10 @@ get:
 		goto getArray
 	}
 
+	if node.bits&hellBitObject != hellBitObject {
+		return nil
+	}
+
 	if len(node.nodes) > MapUseThreshold {
 		if node.bits&hellBitUseMap != hellBitUseMap {
 			var m map[string]int
