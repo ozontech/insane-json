@@ -839,7 +839,7 @@ func (n *Node) AddFieldNoAlloc(root *Root, name string) *Node {
 		return node
 	}
 
-	newNull := &Node{}
+	newNull := n.getNode(root)
 	newNull.bits = hellBitNull
 	newNull.parent = n
 
