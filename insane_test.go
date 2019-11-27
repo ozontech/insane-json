@@ -962,6 +962,7 @@ func TestEscapeString(t *testing.T) {
 		{s: `"`},
 		{s: `	`},
 		{s: `"""\\\\\"""\'\"				\\\""|"|"|"|\\'\dasd'		|"|\\\\'\\\|||\\'"`},
+		{s: `OZON\vshpilevoy`},
 	}
 
 	out := make([]byte, 0, 0)

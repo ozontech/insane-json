@@ -1310,6 +1310,10 @@ func (n *Node) unescapeField() {
 
 	value := n.data
 	i := strings.LastIndexByte(value, '"')
+	//todo: remove it
+	if i < 1 {
+		return
+	}
 	n.data = unescapeStr(value[1:i])
 	n.bits = hellBitField
 }
