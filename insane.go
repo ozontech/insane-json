@@ -1632,6 +1632,7 @@ func (d *decoder) expandPool() []*Node {
 	return d.nodePool
 }
 
+//todo: there is race condition somewhere in this func
 func getFromPool() *decoder {
 	decoderPoolMu.Lock()
 	defer decoderPoolMu.Unlock()
