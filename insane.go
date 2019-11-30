@@ -1632,16 +1632,15 @@ func (d *decoder) expandPool() []*Node {
 	return d.nodePool
 }
 
-//todo: there is race condition somewhere in this func
 func getFromPool() *decoder {
 	decoderPoolMu.Lock()
 	defer decoderPoolMu.Unlock()
 
 	decoderPoolIndex++
-
-	if decoderPoolIndex > len(decoderPool)-1 || decoderPool[decoderPoolIndex] == nil {
+	if decoderPoolIndex >= len(decoderPool) {
 		decoder := &decoder{id: decoderPoolIndex}
 		decoder.initPool()
+		decoder.id = decoderPoolIndex
 		decoderPool = append(decoderPool, decoder)
 	}
 
@@ -1652,10 +1651,11 @@ func backToPool(d *decoder) {
 	decoderPoolMu.Lock()
 	defer decoderPoolMu.Unlock()
 
-	cur := d.id
+	decoderPool[d.id] = decoderPool[decoderPoolIndex]
+	decoderPool[d.id].id = d.id
 
-	decoderPool[cur] = decoderPool[decoderPoolIndex]
-	decoderPool[cur].id = cur
+	d.id = decoderPoolIndex
+	decoderPool[decoderPoolIndex] = d
 
 	decoderPoolIndex--
 }
