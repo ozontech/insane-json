@@ -1170,7 +1170,7 @@ func (n *Node) MutateToBool(value bool) *Node {
 	return n
 }
 
-func (n *Node) MutateToNull(value bool) *Node {
+func (n *Node) MutateToNull() *Node {
 	if n == nil || n.bits&hellBitField == hellBitField {
 		return n
 	}
@@ -1198,6 +1198,33 @@ func (n *Node) MutateToEscapedString(value string) *Node {
 
 	n.bits = hellBitEscapedString
 	n.data = value
+
+	return n
+}
+
+// MutateToBytes mutate to a string and use byte slice as value. It doesn't copy data, so modifications of a slice will change result JSON.
+func (n *Node) MutateToBytes(value []byte) *Node {
+	if n == nil || n.bits&hellBitField == hellBitField {
+		return nil
+	}
+
+	n.bits = hellBitString
+	n.data = toString(value)
+
+	return n
+}
+
+// MutateToBytes mutate to a string and use byte slice as value. It copies data, so modification of a slice won't change result JSON.
+func (n *Node) MutateToBytesCopy(root *Root, value []byte) *Node {
+	if n == nil || n.bits&hellBitField == hellBitField {
+		return nil
+	}
+
+	l := len(root.decoder.buf)
+	root.decoder.buf = append(root.decoder.buf, value...)
+
+	n.bits = hellBitString
+	n.data = toString(root.decoder.buf[l:])
 
 	return n
 }
