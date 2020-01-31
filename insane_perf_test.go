@@ -2,11 +2,14 @@ package insaneJSON
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"os"
+	"reflect"
 	"testing"
+	"unsafe"
 )
 
 type workload struct {
@@ -264,4 +267,130 @@ func BenchmarkValueEscapeString(b *testing.B) {
 			out = escapeString(out[:0], test.s)
 		}
 	}
+}
+
+func BenchmarkNg1(b *testing.B) {
+	content, err := ioutil.ReadFile("benchdata/insane.json")
+	if err != nil {
+		panic(err.Error())
+	}
+
+	b.SetBytes(int64(len(content)))
+	x := 0
+	for i := 0; i < b.N; i++ {
+		for _, c := range content {
+			if c == '{' || c == '}' || c == '[' || c == ']' || c == '"' || c == ',' {
+				x++
+			}
+		}
+	}
+
+	fmt.Printf("\ncount: %d\n", x/b.N)
+}
+
+func BenchmarkNg2(b *testing.B) {
+	content, err := ioutil.ReadFile("benchdata/insane.json")
+	if err != nil {
+		panic(err.Error())
+	}
+
+	b.SetBytes(int64(len(content)))
+	x := 0
+	m := make([]byte, 256)
+	m['{'] = 1
+	m['}'] = 1
+	m['['] = 1
+	m[']'] = 1
+	m[','] = 1
+	m['"'] = 1
+	for i := 0; i < b.N; i++ {
+		for i := 0; i < len(content); i += 8 {
+			l := content[i : i+8]
+			if m[l[0]]+m[l[1]]+m[l[2]]+m[l[3]]+m[l[4]]+m[l[5]]+m[l[6]]+m[l[7]] > 0 {
+				if m[l[0]] == 1 {
+					x++
+				}
+				if m[l[1]] == 1 {
+					x++
+				}
+				if m[l[2]] == 1 {
+					x++
+				}
+				if m[l[3]] == 1 {
+					x++
+				}
+				if m[l[4]] == 1 {
+					x++
+				}
+				if m[l[5]] == 1 {
+					x++
+				}
+				if m[l[6]] == 1 {
+					x++
+				}
+				if m[l[7]] == 1 {
+					x++
+				}
+			}
+		}
+	}
+
+	fmt.Printf("\ncount: %d\n", x/b.N)
+}
+
+func BenchmarkNg3(b *testing.B) {
+	content, err := ioutil.ReadFile("benchdata/insane.json")
+	if err != nil {
+		panic(err.Error())
+	}
+
+	b.SetBytes(int64(len(content)))
+	x := 0
+	root := Spawn()
+	for i := 0; i < b.N; i++ {
+		_ = root.DecodeBytes(content)
+	}
+
+	fmt.Printf("\ncount: %d\n", x/b.N)
+}
+
+func BenchmarkNg4(b *testing.B) {
+	content, err := ioutil.ReadFile("benchdata/insane.json")
+	if err != nil {
+		panic(err.Error())
+	}
+
+	header := (*reflect.SliceHeader)(unsafe.Pointer(&content))
+
+	ccc := content
+	header2 := (*reflect.SliceHeader)(unsafe.Pointer(&ccc))
+	b.SetBytes(int64(len(content)))
+	x := 0
+	flows := []byte(`{}[],`)
+	for i := 0; i < b.N; i++ {
+		for _, flow := range flows {
+			header2.Len = header.Len
+			header2.Data = header.Data
+			header2.Cap = header.Cap
+			data := &header2.Data
+			l := &header2.Len
+			for {
+				pos := bytes.IndexByte(*(*[]byte)(unsafe.Pointer(header2)), flow) + 1
+				if pos <= 0 {
+					fmt.Printf("pos: %d\n", pos)
+					break
+				}
+				x++
+				*data += uintptr(pos)
+				*l -= pos
+			}
+		}
+	}
+
+	fmt.Printf("\ncount: %d\n", x/b.N)
+}
+
+func BenchmarkNg5(b *testing.B) {
+	r1, r2 := InsaneSkipWC_([]byte(`                         .`), []byte(`........`))
+	fmt.Printf("res=%d/%d\n", r1%256, r2%256)
 }
