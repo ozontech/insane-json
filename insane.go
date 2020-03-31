@@ -1240,6 +1240,17 @@ func (n *Node) MutateToObject() *Node {
 	return n
 }
 
+func (n *Node) MutateToArray() *Node {
+	if n == nil || n.bits&hellBitField == hellBitField {
+		return n
+	}
+
+	n.bits = hellBitArray
+	n.nodes = n.nodes[:0]
+
+	return n
+}
+
 func (n *Node) MutateToStrict() *StrictNode {
 	return &StrictNode{n}
 }
@@ -1486,22 +1497,27 @@ func (n *Node) AsInt() int {
 		return 0
 	}
 
+	if n.bits&hellBitTypeFilter == hellBitEscapedString {
+		n.unescapeStr()
+	}
+
 	switch n.bits & hellBitTypeFilter {
 	case hellBitString:
-		return int(math.Round(decodeFloat64(n.data)))
-	case hellBitEscapedString:
-		n.unescapeStr()
-		return int(math.Round(decodeFloat64(n.data)))
+		fallthrough
+	case hellBitField:
+		fallthrough
 	case hellBitNumber:
-		return int(math.Round(decodeFloat64(n.data)))
+		if strings.IndexByte(n.data, '.') != -1 {
+			return int(math.Round(decodeFloat64(n.data)))
+		} else {
+			return int(decodeInt64(n.data))
+		}
 	case hellBitTrue:
 		return 1
 	case hellBitFalse:
 		return 0
 	case hellBitNull:
 		return 0
-	case hellBitField:
-		return int(math.Round(decodeFloat64(n.data)))
 	case hellBitEscapedField:
 		panic("insane json really goes outta its mind")
 	default:
@@ -1518,6 +1534,50 @@ func (n *StrictNode) AsInt() (int, error) {
 		return 0, ErrNotNumber
 	}
 	return int(num), nil
+}
+
+func (n *Node) AsInt64() int64 {
+	if n == nil {
+		return 0
+	}
+
+	if n.bits&hellBitTypeFilter == hellBitEscapedString {
+		n.unescapeStr()
+	}
+
+	switch n.bits & hellBitTypeFilter {
+	case hellBitString:
+		fallthrough
+	case hellBitField:
+		fallthrough
+	case hellBitNumber:
+		if strings.IndexByte(n.data, '.') != -1 {
+			return int64(math.Round(decodeFloat64(n.data)))
+		} else {
+			return decodeInt64(n.data)
+		}
+	case hellBitTrue:
+		return 1
+	case hellBitFalse:
+		return 0
+	case hellBitNull:
+		return 0
+	case hellBitEscapedField:
+		panic("insane json really goes outta its mind")
+	default:
+		return 0
+	}
+}
+
+func (n *StrictNode) AsInt64() (int64, error) {
+	if n == nil || n.bits&hellBitNumber != hellBitNumber {
+		return 0, ErrNotNumber
+	}
+	num := decodeInt64(n.data)
+	if num == 0 && n.data != "0" {
+		return 0, ErrNotNumber
+	}
+	return num, nil
 }
 
 func (n *Node) AsFloat() float64 {
@@ -2213,4 +2273,3 @@ func insaneErr(err error, json string, offset int) error {
 
 	return errors.New(fmt.Sprintf("%s near `%s`\n%s", err.Error(), str, pointer))
 }
-
