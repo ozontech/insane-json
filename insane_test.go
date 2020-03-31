@@ -727,6 +727,79 @@ func TestMutateToObject(t *testing.T) {
 	}
 }
 
+func TestMutateToArray(t *testing.T) {
+	tests := []struct {
+		json   string
+		dig    []string
+		result string
+	}{
+		{
+			json:   `{"a":"b","c":"d"}`,
+			dig:    []string{"a"},
+			result: `{"a":[],"c":"d"}`,
+		},
+		{
+			json:   `{"a":"b","c":"d"}`,
+			dig:    []string{"c"},
+			result: `{"a":"b","c":[]}`,
+		},
+		{
+			json:   `["a","b","c","d"]`,
+			dig:    []string{"1"},
+			result: `["a",[],"c","d"]`,
+		},
+		{
+			json:   `["a","b","c","d"]`,
+			dig:    []string{"0"},
+			result: `[[],"b","c","d"]`,
+		},
+		{
+			json:   `["a","b","c","d"]`,
+			dig:    []string{"3"},
+			result: `["a","b","c",[]]`,
+		},
+		{
+			json:   `"string"`,
+			dig:    []string{},
+			result: `[]`,
+		},
+		{
+			json:   `[]`,
+			dig:    []string{},
+			result: `[]`,
+		},
+		{
+			json:   `true`,
+			dig:    []string{},
+			result: `[]`,
+		},
+		{
+			json:   `{"a":{"a":{"a":{"a":"b","c":"d"},"c":"d"},"c":"d"},"c":"d"}`,
+			dig:    []string{"a", "a", "a", "a"},
+			result: `{"a":{"a":{"a":{"a":[],"c":"d"},"c":"d"},"c":"d"},"c":"d"}`,
+		},
+	}
+
+	for _, test := range tests {
+		root, err := DecodeString(test.json)
+		assert.NoError(t, err, "error while decoding")
+
+		mutatingNode := root.Dig(test.dig...).MutateToArray()
+		assert.True(t, mutatingNode.IsArray(), "wrong node type")
+
+		o := root.Dig(test.dig...)
+		assert.True(t, o.IsArray(), "wrong node type")
+
+		o.AddElement().MutateToString("ok")
+		assert.Equal(t, "ok", o.Dig("0").AsString(), "wrong result json")
+		o.Dig("0").Suicide()
+
+		assert.Equal(t, test.result, root.EncodeToString(), "wrong result json")
+
+		Release(root)
+	}
+}
+
 func TestMutateCollapse(t *testing.T) {
 	tests := []struct {
 		json        string
