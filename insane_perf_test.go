@@ -390,7 +390,3 @@ func BenchmarkNg4(b *testing.B) {
 	fmt.Printf("\ncount: %d\n", x/b.N)
 }
 
-func BenchmarkNg5(b *testing.B) {
-	r1, r2 := InsaneSkipWC_([]byte(`                         .`), []byte(`........`))
-	fmt.Printf("res=%d/%d\n", r1%256, r2%256)
-}

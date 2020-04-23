@@ -1,6 +1,7 @@
 package insaneJSON
 
 import (
+	"fmt"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -373,7 +374,7 @@ func TestAddElement(t *testing.T) {
 		for index := 0; index < test.count; index++ {
 			root.AddElement()
 			l := len(root.AsArray())
-			assert.True(t, root.Dig(strconv.Itoa(l - 1)).IsNull(), "wrong node type")
+			assert.True(t, root.Dig(strconv.Itoa(l-1)).IsNull(), "wrong node type")
 		}
 		assert.Equal(t, test.result, root.EncodeToString(), "wrong encoding")
 		Release(root)
@@ -1053,3 +1054,75 @@ func TestIndex(t *testing.T) {
 
 	assert.Equal(t, index, node.getIndex(), "wrong index")
 }
+
+func TestSkipWC(t *testing.T) {
+	wcTable := make([]byte, 32)
+	wcTable[9] = 255
+	wcTable[10] = 255
+	wcTable[13] = 255
+	wcTable[9+16] = 255
+	wcTable[10+16] = 255
+	wcTable[13+16] = 255
+	tests := []struct {
+		haystack string
+		mask     []byte
+		result   int
+	}{
+		//          0123456789111111012345678911111101234567891111110123456789111111
+		//                    012345          012345          012345          012345 
+		{haystack: "\n                                                               ", mask: wcTable, result: 0},
+		{haystack: " \n                                                              ", mask: wcTable, result: 0},
+		{haystack: "                                                                \n", mask: wcTable, result: 0},
+	}
+
+	for _, test := range tests {
+		r := make([]byte, 32)
+		c := IndexNotWC([]byte(test.haystack), test.mask, r)
+		fmt.Printf("%d %v\n", c, r)
+		//fmt.Printf("%s %d/%d\n", test.haystack, r1, r2)
+		//assert.Equal(t, test.result, r1, "wrong result")
+	}
+}
+
+//TEXT ·InsaneSkipWC(SB), NOSPLIT, $0-40
+//	MOVQ b_base+0(FP), SI
+//	MOVQ b_len+8(FP), BX
+//	MOVB c+24(FP), AL
+//	LEAQ ret+32(FP), R8
+//
+//    MOVD AX, X0
+//    PUNPCKLBW X0, X0
+//    PUNPCKLBW X0, X0
+//    PSHUFL $0, X0, X0
+//
+//    MOVQ SI, DI
+//
+//	MOVD AX, X0
+//	LEAQ -32(SI)(BX*1), R11
+//	VPBROADCASTB  X0, Y1
+//
+//avx2_loop:
+//	VMOVDQU (DI), Y2
+//	VPCMPEQB Y1, Y2, Y3
+//	VPTEST Y3, Y3
+//	JNZ avx2success
+//	ADDQ $32, DI
+//	CMPQ DI, R11
+//	JLT avx2_loop
+//	MOVQ R11, DI
+//	VMOVDQU (DI), Y2
+//	VPCMPEQB Y1, Y2, Y3
+//	VPTEST Y3, Y3
+//	JNZ avx2success
+//	VZEROUPPER
+//	MOVQ $-101, (R8)
+//	RET
+//
+//avx2success:
+//	VPMOVMSKB Y3, DX
+//	BSFL DX, DX
+//	SUBQ SI, DI
+//	ADDQ DI, DX
+//	MOVQ DX, (R8)
+//	VZEROUPPER
+//	RET
