@@ -1145,6 +1145,28 @@ func (n *Node) MutateToInt(value int) *Node {
 	return n
 }
 
+func (n *Node) MutateToInt64(value int64) *Node {
+	if n == nil || n.bits&hellBitField == hellBitField {
+		return n
+	}
+
+	n.bits = hellBitNumber
+	n.data = strconv.FormatInt(value, 10)
+
+	return n
+}
+
+func (n *Node) MutateToUint64(value uint64) *Node {
+	if n == nil || n.bits&hellBitField == hellBitField {
+		return n
+	}
+
+	n.bits = hellBitNumber
+	n.data = strconv.FormatUint(value, 10)
+
+	return n
+}
+
 func (n *Node) MutateToFloat(value float64) *Node {
 	if n == nil || n.bits&hellBitField == hellBitField {
 		return n
