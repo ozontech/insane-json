@@ -1536,6 +1536,50 @@ func (n *StrictNode) AsInt() (int, error) {
 	return int(num), nil
 }
 
+func (n *Node) AsUint64() uint64 {
+	if n == nil {
+		return 0
+	}
+
+	if n.bits&hellBitTypeFilter == hellBitEscapedString {
+		n.unescapeStr()
+	}
+
+	switch n.bits & hellBitTypeFilter {
+	case hellBitString:
+		fallthrough
+	case hellBitField:
+		fallthrough
+	case hellBitNumber:
+		if strings.IndexByte(n.data, '.') != -1 {
+			return uint64(math.Round(decodeFloat64(n.data)))
+		} else {
+			return decodeUint64(n.data)
+		}
+	case hellBitTrue:
+		return 1
+	case hellBitFalse:
+		return 0
+	case hellBitNull:
+		return 0
+	case hellBitEscapedField:
+		panic("insane json really goes outta its mind")
+	default:
+		return 0
+	}
+}
+
+func (n *StrictNode) AsUint64() (uint64, error) {
+	if n == nil || n.bits&hellBitNumber != hellBitNumber {
+		return 0, ErrNotNumber
+	}
+	num := decodeUint64(n.data)
+	if num == 0 && n.data != "0" {
+		return 0, ErrNotNumber
+	}
+	return num, nil
+}
+
 func (n *Node) AsInt64() int64 {
 	if n == nil {
 		return 0
@@ -2009,6 +2053,47 @@ func decodeInt64(s string) int64 {
 		}
 
 		x, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return 0
+		}
+		num = x
+		break
+	}
+
+	if m {
+		return -num
+	} else {
+		return num
+	}
+}
+
+func decodeUint64(s string) uint64 {
+	l := len(s)
+	if l == 0 {
+		return 0
+	}
+
+	o := 0
+	m := s[0] == '-'
+	if m {
+		s = s[1:]
+		l--
+	}
+
+	num := uint64(0)
+	for o < l {
+		c := uint(s[o] - '0')
+		if c > 9 {
+			return 0
+		}
+
+		num = num*10 + uint64(c)
+		o++
+		if o <= 18 {
+			continue
+		}
+
+		x, err := strconv.ParseUint(s, 10, 64)
 		if err != nil {
 			return 0
 		}
