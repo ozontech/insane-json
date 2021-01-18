@@ -1070,9 +1070,10 @@ func TestSkipWC(t *testing.T) {
 	}{
 		//          0123456789111111012345678911111101234567891111110123456789111111
 		//                    012345          012345          012345          012345 
-		{haystack: "\n                                                               ", mask: wcTable, result: 0},
-		{haystack: " \n                                                              ", mask: wcTable, result: 0},
-		{haystack: "                                                                \n", mask: wcTable, result: 0},
+		{haystack: "a                                                               ", mask: wcTable, result: 0},
+		{haystack: "      aaaaaaaaaaaaaaa                                           ", mask: wcTable, result: 6},
+		{haystack: "                                                              a ", mask: wcTable, result: 62},
+		{haystack: "                                                            a   ", mask: wcTable, result: 60},
 	}
 
 	for _, test := range tests {
@@ -1080,7 +1081,7 @@ func TestSkipWC(t *testing.T) {
 		c := IndexNotWC([]byte(test.haystack), test.mask, r)
 		fmt.Printf("%d %v\n", c, r)
 		//fmt.Printf("%s %d/%d\n", test.haystack, r1, r2)
-		//assert.Equal(t, test.result, r1, "wrong result")
+		assert.Equal(t, test.result, c, "wrong result")
 	}
 }
 
