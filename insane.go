@@ -871,12 +871,12 @@ func (n *Node) AddFieldNoAlloc(root *Root, name string) *Node {
 	return newNull
 }
 
-func (n *Node) AddElement() *Node {
+func (n *Node) addElement(root *Root) *Node {
 	if n == nil || n.bits&hellBitArray != hellBitArray {
 		return nil
 	}
 
-	newNull := n.getNode(nil)
+	newNull := n.getNode(root)
 	newNull.bits = hellBitNull
 	newNull.parent = n
 
@@ -887,7 +887,7 @@ func (n *Node) AddElement() *Node {
 		lastVal.next = newNull
 	} else {
 		// restore lost end
-		newEnd := n.getNode(nil)
+		newEnd := n.getNode(root)
 		newEnd.bits = hellBitArrayEnd
 		newEnd.next = n.next
 		newEnd.parent = n
@@ -896,6 +896,14 @@ func (n *Node) AddElement() *Node {
 	n.nodes = append(n.nodes, newNull)
 
 	return newNull
+}
+
+func (n *Node) AddElement() *Node {
+	return n.addElement(nil)
+}
+
+func (n *Node) AddElementNoAlloc(root *Root) *Node {
+	return n.addElement(root)
 }
 
 func (n *Node) InsertElement(pos int) *Node {
