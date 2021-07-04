@@ -1537,7 +1537,7 @@ func (n *Node) AsInt() int {
 	case hellBitField:
 		fallthrough
 	case hellBitNumber:
-		if strings.IndexByte(n.data, '.') != -1 {
+		if strings.IndexAny(n.data, ".eE") != -1 {
 			return int(math.Round(decodeFloat64(n.data)))
 		} else {
 			return int(decodeInt64(n.data))

@@ -136,7 +136,7 @@ func TestDecodeTrueFalseNull(t *testing.T) {
 }
 
 func TestDecodeNumber(t *testing.T) {
-	json := `{"first": 100,"second": 1e20}`
+	json := `{"first": 100,"second": 1e20,"third": 1e+1}`
 	root, err := DecodeString(json)
 	defer Release(root)
 
@@ -145,6 +145,7 @@ func TestDecodeNumber(t *testing.T) {
 
 	assert.Equal(t, 100, root.Dig("first").AsInt(), "wrong node value")
 	assert.Equal(t, 1e20, root.Dig("second").AsFloat(), "wrong node value")
+	assert.Equal(t, 10, root.Dig("third").AsInt(), "wrong node value")
 }
 
 func TestDecodeErr(t *testing.T) {
