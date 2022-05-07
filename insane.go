@@ -3,6 +3,7 @@ package insaneJSON
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"math"
 	"math/rand"
 	"reflect"
@@ -1834,6 +1835,14 @@ func DecodeString(json string) (*Root, error) {
 	return Spawn().decoder.decodeHeadless(json, true)
 }
 
+func DecodeFile(fileName string) (*Root, error) {
+	bytes, err := ioutil.ReadFile(fileName)
+	if err != nil {
+		return nil, err
+	}
+	return DecodeBytes(bytes)
+}
+
 // DecodeBytes clears Root and decodes new JSON. Useful for reusing Root to reduce allocations.
 func (r *Root) DecodeBytes(jsonBytes []byte) error {
 	if r == nil {
@@ -1850,6 +1859,22 @@ func (r *Root) DecodeString(json string) error {
 		return ErrRootIsNil
 	}
 	_, err := r.decoder.decodeHeadless(json, false)
+
+	return err
+}
+
+// DecodeFile clears Root and decodes new JSON. Useful for reusing Root to reduce allocations.
+func (r *Root) DecodeFile(fileName string) error {
+	if r == nil {
+		return ErrRootIsNil
+	}
+
+	bytes, err := ioutil.ReadFile(fileName)
+	if err != nil {
+		return err
+	}
+
+	_, err = r.decoder.decodeHeadless(toString(bytes), false)
 
 	return err
 }
