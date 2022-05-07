@@ -1843,6 +1843,15 @@ func DecodeFile(fileName string) (*Root, error) {
 	return DecodeBytes(bytes)
 }
 
+// Clear makes Root empty object
+func (r *Root) Clear() {
+	if r == nil {
+		return
+	}
+
+	_ = r.DecodeString("{}")
+}
+
 // DecodeBytes clears Root and decodes new JSON. Useful for reusing Root to reduce allocations.
 func (r *Root) DecodeBytes(jsonBytes []byte) error {
 	if r == nil {
