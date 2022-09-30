@@ -1451,7 +1451,7 @@ func (n *Node) AsEscapedString() string {
 
 	switch n.bits & hellBitTypeFilter {
 	case hellBitString:
-		return toString(escapeString(make([]byte, 0, 0), n.data))
+		return toString(escapeString(make([]byte, 0, len(n.data)), n.data))
 	case hellBitEscapedString:
 		return n.data
 	case hellBitNumber:
@@ -1484,7 +1484,7 @@ func (n *StrictNode) AsEscapedString() (string, error) {
 		return n.data, nil
 	}
 
-	return toString(escapeString(make([]byte, 0, 0), n.data)), nil
+	return toString(escapeString(make([]byte, 0, len(n.data)), n.data)), nil
 }
 
 func (n *Node) AsBool() bool {
