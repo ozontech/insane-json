@@ -1444,9 +1444,32 @@ func (n *StrictNode) AsString() (string, error) {
 
 	return n.data, nil
 }
+
 func (n *Node) AsEscapedString() string {
-	escaped := n.AppendEscapedString(make([]byte, 0, len(n.data)))
-	return toString(escaped)
+	if n == nil {
+		return ""
+	}
+
+	switch n.bits & hellBitTypeFilter {
+	case hellBitString:
+		return toString(escapeString(make([]byte, 0, len(n.data)), n.data))
+	case hellBitEscapedString:
+		return n.data
+	case hellBitNumber:
+		return n.data
+	case hellBitTrue:
+		return "true"
+	case hellBitFalse:
+		return "false"
+	case hellBitNull:
+		return "null"
+	case hellBitField:
+		return n.data
+	case hellBitEscapedField:
+		panic("insane json really goes outta its mind")
+	default:
+		return ""
+	}
 }
 
 func (n *Node) AppendEscapedString(out []byte) []byte {
