@@ -103,13 +103,14 @@ func init() {
 
 /*
 Node Is a building block of the decoded JSON. There is seven basic nodes:
-	1. Object
-	2. Array
-	3. String
-	4. Number
-	5. True
-	6. False
-	7. Null
+ 1. Object
+ 2. Array
+ 3. String
+ 4. Number
+ 5. True
+ 6. False
+ 7. Null
+
 And a special one – Field, which represents the field(key) on an objects.
 It allows to easily change field's name, checkout MutateToField() function.
 */
@@ -1468,6 +1469,29 @@ func (n *Node) AsEscapedString() string {
 		panic("insane json really goes outta its mind")
 	default:
 		return ""
+	}
+}
+
+func (n *Node) AppendEscapedString(out []byte) []byte {
+	if n == nil {
+		return out
+	}
+
+	switch n.bits & hellBitTypeFilter {
+	case hellBitString:
+		return escapeString(out, n.data)
+	case hellBitEscapedString, hellBitNumber, hellBitField:
+		return append(out, n.data...)
+	case hellBitTrue:
+		return append(out, "true"...)
+	case hellBitFalse:
+		return append(out, "false"...)
+	case hellBitNull:
+		return append(out, "null"...)
+	case hellBitEscapedField:
+		panic("insane json really goes outta its mind")
+	default:
+		return out
 	}
 }
 
