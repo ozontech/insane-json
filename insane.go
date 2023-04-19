@@ -1380,7 +1380,7 @@ func (n *Node) unescapeField() {
 
 	value := n.data
 	i := strings.LastIndexByte(value, '"')
-	//todo: remove it
+	// todo: remove it
 	if i < 1 {
 		return
 	}
@@ -1540,7 +1540,7 @@ func (n *Node) AsBool() bool {
 }
 
 func (n *StrictNode) AsBool() (bool, error) {
-	if n == nil || (n.bits&hellBitTrue != hellBitTrue && n.bits&hellBitTrue != hellBitFalse) {
+	if n == nil || (n.bits&hellBitTrue != hellBitTrue && n.bits&hellBitFalse != hellBitFalse) {
 		return false, ErrNotBool
 	}
 
