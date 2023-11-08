@@ -1,4 +1,4 @@
-module github.com/vitkovskii/insane-json
+module github.com/ozontech/insane-json
 
 go 1.12
 
