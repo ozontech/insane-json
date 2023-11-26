@@ -149,7 +149,7 @@ type decoder struct {
 	nodePool []Node
 }
 
-func (d *decoder) getNode() *Node {
+func (d *decoder) nodeFromPool() *Node {
 	if cap(d.nodePool) > len(d.nodePool) {
 		d.nodePool = d.nodePool[:len(d.nodePool)+1]
 	} else {
@@ -221,7 +221,7 @@ func (d *decoder) decode(json string, shouldReset bool) (*Node, error) {
 	json = toString(d.buf)
 	l := len(json)
 
-	root := d.getNode()
+	root := d.nodeFromPool()
 	root.parent = nil
 	curNode := root
 	topNode := root.parent
@@ -250,13 +250,13 @@ decodeObject:
 	}
 
 	if c == '}' {
-		curNode.next = d.getNode()
+		curNode.next = d.nodeFromPool()
 		curNode = curNode.next
 
 		curNode.bits = hellBitEnd
 		curNode.parent = topNode
 
-		topNode.next = d.getNode()
+		topNode.next = d.nodeFromPool()
 		topNode = topNode.parent
 
 		goto pop
@@ -320,7 +320,7 @@ decodeObject:
 		return nil, insaneErr(ErrExpectedObjectFieldSeparator, json, o)
 	}
 
-	curNode.next = d.getNode()
+	curNode.next = d.nodeFromPool()
 	curNode = curNode.next
 
 	// skip wc
@@ -368,13 +368,13 @@ decodeArray:
 	}
 
 	if c == ']' {
-		curNode.next = d.getNode()
+		curNode.next = d.nodeFromPool()
 		curNode = curNode.next
 
 		curNode.bits = hellBitArrayEnd
 		curNode.parent = topNode
 
-		topNode.next = d.getNode()
+		topNode.next = d.nodeFromPool()
 		topNode = topNode.parent
 
 		goto pop
@@ -394,7 +394,7 @@ decodeArray:
 		}
 	}
 
-	topNode.nodes = append(topNode.nodes, d.getNode())
+	topNode.nodes = append(topNode.nodes, d.nodeFromPool())
 decode:
 	// skip wc
 	c = json[o]
@@ -415,7 +415,7 @@ decode:
 			return nil, insaneErr(ErrExpectedObjectField, json, o)
 		}
 
-		curNode.next = d.getNode()
+		curNode.next = d.nodeFromPool()
 		curNode = curNode.next
 
 		curNode.bits = hellBitObject
@@ -428,7 +428,7 @@ decode:
 		if o == l {
 			return nil, insaneErr(ErrExpectedValue, json, o)
 		}
-		curNode.next = d.getNode()
+		curNode.next = d.nodeFromPool()
 		curNode = curNode.next
 
 		curNode.bits = hellBitArray
@@ -459,7 +459,7 @@ decode:
 			}
 		}
 
-		curNode.next = d.getNode()
+		curNode.next = d.nodeFromPool()
 		curNode = curNode.next
 
 		curNode.bits = hellBitEscapedString
@@ -473,7 +473,7 @@ decode:
 		}
 		o += 3
 
-		curNode.next = d.getNode()
+		curNode.next = d.nodeFromPool()
 		curNode = curNode.next
 
 		curNode.bits = hellBitTrue
@@ -485,7 +485,7 @@ decode:
 		}
 		o += 4
 
-		curNode.next = d.getNode()
+		curNode.next = d.nodeFromPool()
 		curNode = curNode.next
 
 		curNode.bits = hellBitFalse
@@ -497,7 +497,7 @@ decode:
 		}
 		o += 3
 
-		curNode.next = d.getNode()
+		curNode.next = d.nodeFromPool()
 		curNode = curNode.next
 
 		curNode.bits = hellBitNull
@@ -511,7 +511,7 @@ decode:
 			return nil, insaneErr(ErrExpectedValue, json, o)
 		}
 
-		curNode.next = d.getNode()
+		curNode.next = d.nodeFromPool()
 		curNode = curNode.next
 
 		curNode.bits = hellBitNumber
@@ -1759,7 +1759,7 @@ func (n *Node) getNode(root *Root) *Node {
 	if root == nil {
 		return &Node{}
 	} else {
-		return root.decoder.getNode()
+		return root.decoder.nodeFromPool()
 	}
 }
 
