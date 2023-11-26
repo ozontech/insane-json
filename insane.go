@@ -3,9 +3,9 @@ package insaneJSON
 import (
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"math/rand"
+	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -59,7 +59,6 @@ const (
 )
 
 var (
-	StartNodePoolSize      = 128
 	MapUseThreshold        = 16
 	DisableBeautifulErrors = false // set to "true" for best performance, if you have many decode errors
 
@@ -144,11 +143,24 @@ type StrictNode struct {
 }
 
 type decoder struct {
-	id        int
-	buf       []byte
-	root      Root
-	nodePool  []*Node
-	nodeCount int
+	id       int
+	buf      []byte
+	root     Root
+	nodePool []Node
+}
+
+func (d *decoder) getNode() *Node {
+	if cap(d.nodePool) > len(d.nodePool) {
+		d.nodePool = d.nodePool[:len(d.nodePool)+1]
+	} else {
+		d.nodePool = append(d.nodePool, Node{})
+	}
+	return &d.nodePool[len(d.nodePool)-1]
+}
+
+func (d *decoder) reset() {
+	d.nodePool = d.nodePool[:0]
+	d.buf = d.buf[:0]
 }
 
 /*
@@ -165,7 +177,7 @@ ReleasePoolMem sends node pool to GC.
 Useful to reduce memory usage after decoding big JSON.
 */
 func (r *Root) ReleasePoolMem() {
-	r.decoder.initPool()
+	r.decoder.nodePool = []Node{}
 }
 
 /*
@@ -173,7 +185,7 @@ ReleaseBufMem sends internal buffer to GC.
 Useful to reduce memory usage after decoding big JSON.
 */
 func (r *Root) ReleaseBufMem() {
-	r.decoder.buf = make([]byte, 0, 0)
+	r.decoder.buf = []byte{}
 }
 
 /*
@@ -201,8 +213,7 @@ func (d *decoder) decode(json string, shouldReset bool) (*Node, error) {
 	}
 
 	if shouldReset {
-		d.nodeCount = 0
-		d.buf = d.buf[:0]
+		d.reset()
 	}
 	o := len(d.buf)
 
@@ -210,13 +221,9 @@ func (d *decoder) decode(json string, shouldReset bool) (*Node, error) {
 	json = toString(d.buf)
 	l := len(json)
 
-	nodePool := d.nodePool
-	nodePoolLen := len(nodePool)
-	nodes := d.nodeCount
-
-	root := nodePool[nodes]
+	root := d.getNode()
 	root.parent = nil
-	curNode := nodePool[nodes]
+	curNode := root
 	topNode := root.parent
 
 	c := byte('i') // i means insane
@@ -243,14 +250,13 @@ decodeObject:
 	}
 
 	if c == '}' {
-		curNode.next = nodePool[nodes]
+		curNode.next = d.getNode()
 		curNode = curNode.next
-		nodes++
 
 		curNode.bits = hellBitEnd
 		curNode.parent = topNode
 
-		topNode.next = nodePool[nodes]
+		topNode.next = d.getNode()
 		topNode = topNode.parent
 
 		goto pop
@@ -314,9 +320,8 @@ decodeObject:
 		return nil, insaneErr(ErrExpectedObjectFieldSeparator, json, o)
 	}
 
-	curNode.next = nodePool[nodes]
+	curNode.next = d.getNode()
 	curNode = curNode.next
-	nodes++
 
 	// skip wc
 	c = json[o]
@@ -363,14 +368,13 @@ decodeArray:
 	}
 
 	if c == ']' {
-		curNode.next = nodePool[nodes]
+		curNode.next = d.getNode()
 		curNode = curNode.next
-		nodes++
 
 		curNode.bits = hellBitArrayEnd
 		curNode.parent = topNode
 
-		topNode.next = nodePool[nodes]
+		topNode.next = d.getNode()
 		topNode = topNode.parent
 
 		goto pop
@@ -390,7 +394,7 @@ decodeArray:
 		}
 	}
 
-	topNode.nodes = append(topNode.nodes, nodePool[nodes])
+	topNode.nodes = append(topNode.nodes, d.getNode())
 decode:
 	// skip wc
 	c = json[o]
@@ -411,37 +415,27 @@ decode:
 			return nil, insaneErr(ErrExpectedObjectField, json, o)
 		}
 
-		curNode.next = nodePool[nodes]
+		curNode.next = d.getNode()
 		curNode = curNode.next
-		nodes++
 
 		curNode.bits = hellBitObject
 		curNode.nodes = curNode.nodes[:0]
 		curNode.parent = topNode
 
 		topNode = curNode
-		if nodes >= nodePoolLen-1 {
-			nodePool = d.expandPool()
-			nodePoolLen = len(nodePool)
-		}
 		goto decodeObject
 	case '[':
 		if o == l {
 			return nil, insaneErr(ErrExpectedValue, json, o)
 		}
-		curNode.next = nodePool[nodes]
+		curNode.next = d.getNode()
 		curNode = curNode.next
-		nodes++
 
 		curNode.bits = hellBitArray
 		curNode.nodes = curNode.nodes[:0]
 		curNode.parent = topNode
 
 		topNode = curNode
-		if nodes >= nodePoolLen-1 {
-			nodePool = d.expandPool()
-			nodePoolLen = len(nodePool)
-		}
 		goto decodeArray
 	case '"':
 		t = o
@@ -465,9 +459,8 @@ decode:
 			}
 		}
 
-		curNode.next = nodePool[nodes]
+		curNode.next = d.getNode()
 		curNode = curNode.next
-		nodes++
 
 		curNode.bits = hellBitEscapedString
 		curNode.data = json[o-1 : t]
@@ -480,9 +473,8 @@ decode:
 		}
 		o += 3
 
-		curNode.next = nodePool[nodes]
+		curNode.next = d.getNode()
 		curNode = curNode.next
-		nodes++
 
 		curNode.bits = hellBitTrue
 		curNode.parent = topNode
@@ -493,9 +485,8 @@ decode:
 		}
 		o += 4
 
-		curNode.next = nodePool[nodes]
+		curNode.next = d.getNode()
 		curNode = curNode.next
-		nodes++
 
 		curNode.bits = hellBitFalse
 		curNode.parent = topNode
@@ -506,9 +497,8 @@ decode:
 		}
 		o += 3
 
-		curNode.next = nodePool[nodes]
+		curNode.next = d.getNode()
 		curNode = curNode.next
-		nodes++
 
 		curNode.bits = hellBitNull
 		curNode.parent = topNode
@@ -521,9 +511,8 @@ decode:
 			return nil, insaneErr(ErrExpectedValue, json, o)
 		}
 
-		curNode.next = nodePool[nodes]
+		curNode.next = d.getNode()
 		curNode = curNode.next
-		nodes++
 
 		curNode.bits = hellBitNumber
 		curNode.data = json[t:o]
@@ -532,11 +521,6 @@ decode:
 pop:
 	if topNode == nil {
 		goto exit
-	}
-
-	if nodes >= nodePoolLen-1 {
-		nodePool = d.expandPool()
-		nodePoolLen = len(nodePool)
 	}
 
 	if topNode.bits&hellBitObject == hellBitObject {
@@ -565,7 +549,6 @@ exit:
 
 	root.next = nil
 	curNode.next = nil
-	d.nodeCount = nodes
 
 	return root, nil
 }
@@ -806,16 +789,6 @@ getArray:
 	curField = path[curDepth]
 	node = (node.nodes)[index]
 	goto get
-}
-
-func (d *decoder) getNode() *Node {
-	node := d.nodePool[d.nodeCount]
-	d.nodeCount++
-	if d.nodeCount > len(d.nodePool)-16 {
-		d.expandPool()
-	}
-
-	return node
 }
 
 func (n *Node) DigStrict(path ...string) (*StrictNode, error) {
@@ -1802,22 +1775,6 @@ func (n *Node) getIndex() int {
 //       DECODER        //
 // ******************** //
 
-func (d *decoder) initPool() {
-	d.nodePool = make([]*Node, StartNodePoolSize, StartNodePoolSize)
-	for i := 0; i < StartNodePoolSize; i++ {
-		d.nodePool[i] = &Node{}
-	}
-}
-
-func (d *decoder) expandPool() []*Node {
-	c := cap(d.nodePool)
-	for i := 0; i < c; i++ {
-		d.nodePool = append(d.nodePool, &Node{})
-	}
-
-	return d.nodePool
-}
-
 func getFromPool() *decoder {
 	decoderPoolMu.Lock()
 	defer decoderPoolMu.Unlock()
@@ -1825,8 +1782,6 @@ func getFromPool() *decoder {
 	decoderPoolIndex++
 	if decoderPoolIndex >= len(decoderPool) {
 		decoder := &decoder{id: decoderPoolIndex}
-		decoder.initPool()
-		decoder.id = decoderPoolIndex
 		decoderPool = append(decoderPool, decoder)
 	}
 
@@ -1860,7 +1815,7 @@ func DecodeString(json string) (*Root, error) {
 }
 
 func DecodeFile(fileName string) (*Root, error) {
-	bytes, err := ioutil.ReadFile(fileName)
+	bytes, err := os.ReadFile(fileName)
 	if err != nil {
 		return nil, err
 	}
@@ -1902,7 +1857,7 @@ func (r *Root) DecodeFile(fileName string) error {
 		return ErrRootIsNil
 	}
 
-	bytes, err := ioutil.ReadFile(fileName)
+	bytes, err := os.ReadFile(fileName)
 	if err != nil {
 		return err
 	}

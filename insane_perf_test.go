@@ -3,7 +3,6 @@ package insaneJSON
 import (
 	"bufio"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"testing"
@@ -55,7 +54,7 @@ func getStableWorkload() ([]*workload, int64) {
 }
 
 func loadJSON(name string, requests [][]string) *workload {
-	content, err := ioutil.ReadFile(fmt.Sprintf("benchdata/%s.json", name))
+	content, err := os.ReadFile(fmt.Sprintf("benchdata/%s.json", name))
 	if err != nil {
 		panic(err.Error())
 	}
