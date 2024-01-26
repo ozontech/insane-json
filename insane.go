@@ -809,13 +809,13 @@ getArray:
 }
 
 func (d *decoder) getNode() *Node {
-	node := &d.nodePool[d.nodeCount]
+	last := d.nodeCount
 	d.nodeCount++
 	if d.nodeCount > len(d.nodePool)-16 {
 		d.expandPool()
 	}
 
-	return node
+	return &d.nodePool[last]
 }
 
 func (n *Node) DigStrict(path ...string) (*StrictNode, error) {
