@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        flags: [ '', '-race' ]
+        go-version: [ '1.19', '1.20', '1.21' ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go ${{ matrix.go-version }}
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Build
+        run: go build -v ./...
+
+      - name: Test
+        env:
+          GOFLAGS: ${{ matrix.flags }}
+        run: go test -coverprofile=profile.out -covermode=atomic -v -coverpkg=./... ./...
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage
+          path: |
+            profile.out
+          if-no-files-found: error
+          retention-days: 1
+
+  upload:
+    runs-on: ubuntu-latest
+    needs:
+      - test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: coverage
+
+      - name: Send coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: profile.out
