@@ -63,9 +63,13 @@ var (
 	MapUseThreshold        = 16
 	DisableBeautifulErrors = false // set to "true" for best performance, if you have many decode errors
 
-	decoderPool      = make([]*decoder, 0, 16)
-	decoderPoolIndex = -1
-	decoderPoolMu    = &sync.Mutex{}
+	decoderPool = sync.Pool{
+		New: func() interface{} {
+			d := new(decoder)
+			d.initPool()
+			return d
+		},
+	}
 
 	numbersMap = make([]byte, 256)
 
@@ -570,12 +574,9 @@ exit:
 	return root, nil
 }
 
-func (d *decoder) decodeHeadless(json string, isPooled bool) (*Root, error) {
+func (d *decoder) decodeHeadless(json string) (*Root, error) {
 	root, err := d.decode(json, true)
 	if err != nil {
-		if isPooled {
-			backToPool(d)
-		}
 		return nil, err
 	}
 
@@ -1803,60 +1804,42 @@ func (n *Node) getIndex() int {
 // ******************** //
 
 func (d *decoder) initPool() {
-	d.nodePool = make([]*Node, StartNodePoolSize, StartNodePoolSize)
+	buf := make([]Node, StartNodePoolSize)
+	d.nodePool = make([]*Node, StartNodePoolSize)
 	for i := 0; i < StartNodePoolSize; i++ {
-		d.nodePool[i] = &Node{}
+		d.nodePool[i] = &buf[i]
 	}
 }
 
 func (d *decoder) expandPool() []*Node {
 	c := cap(d.nodePool)
+	buf := make([]Node, c)
 	for i := 0; i < c; i++ {
-		d.nodePool = append(d.nodePool, &Node{})
+		d.nodePool = append(d.nodePool, &buf[i])
 	}
 
 	return d.nodePool
 }
 
 func getFromPool() *decoder {
-	decoderPoolMu.Lock()
-	defer decoderPoolMu.Unlock()
-
-	decoderPoolIndex++
-	if decoderPoolIndex >= len(decoderPool) {
-		decoder := &decoder{id: decoderPoolIndex}
-		decoder.initPool()
-		decoder.id = decoderPoolIndex
-		decoderPool = append(decoderPool, decoder)
-	}
-
-	return decoderPool[decoderPoolIndex]
+	return decoderPool.Get().(*decoder)
 }
 
 func backToPool(d *decoder) {
-	decoderPoolMu.Lock()
-	defer decoderPoolMu.Unlock()
-
-	decoderPool[d.id] = decoderPool[decoderPoolIndex]
-	decoderPool[d.id].id = d.id
-
-	d.id = decoderPoolIndex
-	decoderPool[decoderPoolIndex] = d
-
-	decoderPoolIndex--
+	decoderPool.Put(d)
 }
 
 func Spawn() *Root {
-	root, _ := getFromPool().decodeHeadless("{}", true)
+	root, _ := getFromPool().decodeHeadless("{}")
 	return root
 }
 
 func DecodeBytes(jsonBytes []byte) (*Root, error) {
-	return Spawn().decoder.decodeHeadless(toString(jsonBytes), true)
+	return Spawn().decoder.decodeHeadless(toString(jsonBytes))
 }
 
 func DecodeString(json string) (*Root, error) {
-	return Spawn().decoder.decodeHeadless(json, true)
+	return Spawn().decoder.decodeHeadless(json)
 }
 
 func DecodeFile(fileName string) (*Root, error) {
@@ -1881,7 +1864,7 @@ func (r *Root) DecodeBytes(jsonBytes []byte) error {
 	if r == nil {
 		return ErrRootIsNil
 	}
-	_, err := r.decoder.decodeHeadless(toString(jsonBytes), false)
+	_, err := r.decoder.decodeHeadless(toString(jsonBytes))
 
 	return err
 }
@@ -1891,7 +1874,7 @@ func (r *Root) DecodeString(json string) error {
 	if r == nil {
 		return ErrRootIsNil
 	}
-	_, err := r.decoder.decodeHeadless(json, false)
+	_, err := r.decoder.decodeHeadless(json)
 
 	return err
 }
@@ -1907,7 +1890,7 @@ func (r *Root) DecodeFile(fileName string) error {
 		return err
 	}
 
-	_, err = r.decoder.decodeHeadless(toString(bytes), false)
+	_, err = r.decoder.decodeHeadless(toString(bytes))
 
 	return err
 }
