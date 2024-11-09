@@ -67,6 +67,8 @@ func TestDecodeAdditional(t *testing.T) {
 	assert.NoError(t, err, "error while decoding")
 
 	assert.Equal(t, jsonA, root.EncodeToString(), "wrong first node")
+	assert.Equal(t, len(jsonA), root.ByteLength(), "wrong byte length")
+
 	assert.Equal(t, 1, node.Dig("1").AsInt(), "wrong node value")
 }
 
@@ -204,7 +206,6 @@ func TestDecodeErr(t *testing.T) {
 		{json: `falsenull`, err: ErrUnexpectedJSONEnding},
 		{json: `null:`, err: ErrUnexpectedJSONEnding},
 
-
 		// ok
 		{json: `0`, err: nil},
 		{json: `1.0`, err: nil},
@@ -241,6 +242,7 @@ func TestEncode(t *testing.T) {
 	assert.NotNil(t, root, "node shouldn't be nil")
 
 	assert.Equal(t, json, root.EncodeToString(), "wrong encoding")
+	assert.Equal(t, len(json), root.ByteLength(), "wrong byte length")
 }
 
 func TestString(t *testing.T) {
@@ -256,6 +258,7 @@ func TestString(t *testing.T) {
 	assert.Equal(t, "shit", root.Dig("1").AsString(), "wrong node value")
 
 	assert.Equal(t, json, root.EncodeToString(), "wrong encoding")
+	assert.Equal(t, len(json), root.ByteLength(), "wrong byte length")
 }
 
 func TestField(t *testing.T) {
@@ -269,6 +272,7 @@ func TestField(t *testing.T) {
 	assert.Equal(t, "shit", root.Dig(`hello \ " op \ " op op`).AsString(), "wrong node value")
 
 	assert.Equal(t, json, root.EncodeToString(), "wrong encoding")
+	assert.Equal(t, len(json), root.ByteLength(), "wrong byte length")
 }
 
 func TestInsane(t *testing.T) {
@@ -349,6 +353,7 @@ func TestAddField(t *testing.T) {
 			assert.True(t, root.Dig(field).IsNull(), "wrong node type")
 		}
 		assert.Equal(t, test.result, root.EncodeToString(), "wrong encoding")
+		assert.Equal(t, len(test.result), root.ByteLength(), "wrong byte length")
 		Release(root)
 	}
 }
@@ -374,9 +379,10 @@ func TestAddElement(t *testing.T) {
 		for index := 0; index < test.count; index++ {
 			root.AddElement()
 			l := len(root.AsArray())
-			assert.True(t, root.Dig(strconv.Itoa(l - 1)).IsNull(), "wrong node type")
+			assert.True(t, root.Dig(strconv.Itoa(l-1)).IsNull(), "wrong node type")
 		}
 		assert.Equal(t, test.result, root.EncodeToString(), "wrong encoding")
+		assert.Equal(t, len(test.result), root.ByteLength(), "wrong byte length")
 		Release(root)
 	}
 }
@@ -408,6 +414,7 @@ func TestInsertElement(t *testing.T) {
 		assert.True(t, root.Dig(strconv.Itoa(test.pos2)).IsNull(), "wrong node type")
 
 		assert.Equal(t, test.result, root.EncodeToString(), "wrong encoding")
+		assert.Equal(t, len(test.result), root.ByteLength(), "wrong byte length")
 		Release(root)
 	}
 }
@@ -477,6 +484,7 @@ func TestArraySuicide(t *testing.T) {
 		}
 		assert.Equal(t, 0, len(root.AsArray()), "array should be empty")
 		assert.Equal(t, `[]`, root.EncodeToString(), "array should be empty")
+		assert.Equal(t, len(`[]`), root.ByteLength(), "wrong byte length")
 		Release(root)
 
 		root, err = DecodeString(json)
@@ -488,6 +496,7 @@ func TestArraySuicide(t *testing.T) {
 
 		assert.Equal(t, 0, len(root.AsArray()), "array should be empty")
 		assert.Equal(t, `[]`, root.EncodeToString(), "array should be empty")
+		assert.Equal(t, len(`[]`), root.ByteLength(), "wrong byte length")
 		Release(root)
 	}
 }
@@ -514,6 +523,7 @@ func TestObjectSuicide(t *testing.T) {
 		}
 		assert.Equal(t, 0, len(root.AsArray()), "array should be empty")
 		assert.Equal(t, `{}`, root.EncodeToString(), "array should be empty")
+		assert.Equal(t, len(`{}`), root.ByteLength(), "wrong byte length")
 		Release(root)
 
 		root, err = DecodeString(json)
@@ -528,6 +538,7 @@ func TestObjectSuicide(t *testing.T) {
 		}
 		assert.Equal(t, 0, len(root.AsArray()), "array should be empty")
 		assert.Equal(t, `{}`, root.EncodeToString(), "array should be empty")
+		assert.Equal(t, len(`{}`), root.ByteLength(), "wrong byte length")
 		Release(root)
 	}
 }
@@ -548,6 +559,7 @@ func TestMergeWith(t *testing.T) {
 	root.MergeWith(node)
 
 	assert.Equal(t, `{"1":"1","2":"2","3":"3","4":"4"}`, root.EncodeToString(), "wrong first node")
+	assert.Equal(t, len(`{"1":"1","2":"2","3":"3","4":"4"}`), root.ByteLength(), "wrong byte length")
 }
 
 func TestMergeWithComplex(t *testing.T) {
@@ -566,6 +578,7 @@ func TestMergeWithComplex(t *testing.T) {
 	root.MergeWith(node)
 
 	assert.Equal(t, `{"1":1,"2":{"2":"2"}}`, root.EncodeToString(), "wrong first node")
+	assert.Equal(t, len(`{"1":1,"2":{"2":"2"}}`), root.ByteLength(), "wrong byte length")
 }
 
 func TestMutateToJSON(t *testing.T) {
@@ -650,6 +663,7 @@ func TestMutateToJSON(t *testing.T) {
 		}
 
 		assert.Equal(t, test.result, root.EncodeToString(), "wrong result json")
+		assert.Equal(t, len(test.result), root.ByteLength(), "wrong byte length")
 
 		Release(root)
 	}
@@ -723,6 +737,7 @@ func TestMutateToObject(t *testing.T) {
 		o.Dig("test").Suicide()
 
 		assert.Equal(t, test.result, root.EncodeToString(), "wrong result json")
+		assert.Equal(t, len(test.result), root.ByteLength(), "wrong byte length")
 
 		Release(root)
 	}
@@ -796,6 +811,7 @@ func TestMutateToArray(t *testing.T) {
 		o.Dig("0").Suicide()
 
 		assert.Equal(t, test.result, root.EncodeToString(), "wrong result json")
+		assert.Equal(t, len(test.result), root.ByteLength(), "wrong byte length")
 
 		Release(root)
 	}
@@ -840,6 +856,7 @@ func TestMutateCollapse(t *testing.T) {
 		}
 
 		assert.Equal(t, test.result, root.EncodeToString(), "wrong result json")
+		assert.Equal(t, len(test.result), root.ByteLength(), "wrong byte length")
 		Release(root)
 	}
 }
@@ -853,6 +870,7 @@ func TestMutateToInt(t *testing.T) {
 	assert.Equal(t, 5, root.Dig("a").AsInt(), "wrong node value")
 
 	assert.Equal(t, `{"a":5}`, root.EncodeToString(), "wrong result json")
+	assert.Equal(t, len(`{"a":5}`), root.ByteLength(), "wrong byte length")
 }
 
 func TestMutateToFloat(t *testing.T) {
@@ -865,6 +883,7 @@ func TestMutateToFloat(t *testing.T) {
 	assert.Equal(t, 6, root.Dig("a").AsInt(), "wrong node value")
 
 	assert.Equal(t, `{"a":5.6}`, root.EncodeToString(), "wrong result json")
+	assert.Equal(t, len(`{"a":5.6}`), root.ByteLength(), "wrong byte length")
 }
 
 func TestMutateToString(t *testing.T) {
@@ -876,6 +895,7 @@ func TestMutateToString(t *testing.T) {
 	assert.Equal(t, "insane", root.Dig("a").AsString(), "wrong node value")
 
 	assert.Equal(t, `{"a":"insane"}`, root.EncodeToString(), "wrong result json")
+	assert.Equal(t, len(`{"a":"insane"}`), root.ByteLength(), "wrong byte length")
 }
 
 func TestMutateToField(t *testing.T) {
@@ -893,6 +913,7 @@ func TestMutateToField(t *testing.T) {
 		assert.Equal(t, "", root.Dig("unique").AsString(), "wrong node value for %s", json)
 		assert.Equal(t, "some_val", root.Dig("mutated").AsString(), "wrong node value for %s", json)
 		assert.Equal(t, strings.ReplaceAll(json, "unique", "mutated"), root.EncodeToString(), "wrong result json for %s", json)
+		assert.Equal(t, len(strings.ReplaceAll(json, "unique", "mutated")), root.ByteLength(), "wrong byte length for %s", json)
 
 		Release(root)
 	}
@@ -907,6 +928,7 @@ func TestDigField(t *testing.T) {
 	assert.Equal(t, "b", root.Dig("insane").AsString(), "wrong node value")
 
 	assert.Equal(t, `{"insane":"b"}`, root.EncodeToString(), "wrong result json")
+	assert.Equal(t, len(`{"insane":"b"}`), root.ByteLength(), "wrong byte length")
 }
 
 func TestWhitespace(t *testing.T) {
@@ -946,6 +968,7 @@ func TestObjectManyFieldsSuicide(t *testing.T) {
 	}
 
 	assert.Equal(t, `{}`, root.EncodeToString(), "wrong result json")
+	assert.Equal(t, len(`{}`), root.ByteLength(), "wrong byte length")
 }
 
 func TestObjectManyFieldsAddSuicide(t *testing.T) {
@@ -974,6 +997,7 @@ func TestObjectManyFieldsAddSuicide(t *testing.T) {
 	}
 
 	assert.Equal(t, `{}`, root.EncodeToString(), "wrong result json")
+	assert.Equal(t, len(`{}`), root.ByteLength(), "wrong byte length")
 }
 
 func TestObjectFields(t *testing.T) {
@@ -1043,6 +1067,8 @@ func TestEscapeString(t *testing.T) {
 	for _, test := range tests {
 		out = escapeString(out[:0], test.s)
 		assert.Equal(t, string(strconv.AppendQuote(nil, test.s)), string(out), "wrong escaping")
+		size := newBytesCounter().addEscapedString(test.s).total()
+		assert.Equal(t, len(string(strconv.AppendQuote(nil, test.s))), size, "wrong string escaping by bytes counter")
 	}
 }
 

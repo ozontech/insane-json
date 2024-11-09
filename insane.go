@@ -707,6 +707,199 @@ popSkip:
 	}
 }
 
+type bytesCounter int
+
+func newBytesCounter() bytesCounter {
+	return 0
+}
+
+func (c bytesCounter) addByte(_ byte) bytesCounter {
+	return c + 1
+}
+
+func (c bytesCounter) addBytes(a []byte) bytesCounter {
+	return c + bytesCounter(len(a))
+}
+
+func (c bytesCounter) addString(s string) bytesCounter {
+	return c + bytesCounter(len(s))
+}
+
+func (c bytesCounter) addEscapedString(str string) bytesCounter {
+	if !shouldEscape(str) {
+		return c.addByte('"').addString(str).addByte('"')
+	}
+
+	result := c.addByte('"')
+	s := toByte(str)
+	start := 0
+	for i := 0; i < len(s); {
+		if b := s[i]; b < utf8.RuneSelf {
+			if 0x20 <= b && b != '\\' && b != '"' && b != '<' && b != '>' && b != '&' {
+				i++
+				continue
+			}
+			if start < i {
+				result = result.addBytes(s[start:i])
+			}
+			switch b {
+			case '\\', '"':
+				result = result.addByte('\\').addByte(b)
+			case '\n':
+				result = result.addString("\\n")
+			case '\r':
+				result = result.addString("\\r")
+			case '\t':
+				result = result.addString("\\t")
+			default:
+				result = result.addString("\\u00")
+				result = result.addByte(hex[b>>4])
+				result = result.addByte(hex[b&0xf])
+			}
+			i++
+			start = i
+			continue
+		}
+
+		c, size := utf8.DecodeRune(s[i:])
+		if c == utf8.RuneError && size == 1 {
+			if start < i {
+				result = result.addBytes(s[start:i])
+			}
+			result = result.addString("\\ufffd")
+			i += size
+			start = i
+			continue
+		}
+
+		if c == '\u2028' || c == '\u2029' {
+			if start < i {
+				result = result.addBytes(s[start:i])
+			}
+			result = result.addString("\\u202")
+			result = result.addByte(hex[c&0xF])
+			i += size
+			start = i
+			continue
+		}
+		i += size
+	}
+	if start < len(s) {
+		result = result.addBytes(s[start:])
+	}
+	result = result.addByte('"')
+
+	return result
+}
+
+func (c bytesCounter) total() int {
+	return int(c)
+}
+
+// ByteLength is like Encode, but it doesn't allocate and returns node byte length
+func (n *Node) ByteLength() int {
+	result := newBytesCounter()
+
+	s := 0
+	curNode := n
+	topNode := n
+
+	if len(curNode.nodes) == 0 {
+		if curNode.bits&hellBitObject == hellBitObject {
+			return result.addString("{}").total()
+		}
+		if curNode.bits&hellBitArray == hellBitArray {
+			return result.addString("[]").total()
+		}
+	}
+
+	goto encodeSkip
+encode:
+	result = result.addString(",")
+encodeSkip:
+	switch curNode.bits & hellBitTypeFilter {
+	case hellBitObject:
+		if len(curNode.nodes) == 0 {
+			result = result.addString("{}")
+			curNode = curNode.next
+			goto popSkip
+		}
+		topNode = curNode
+		result = result.addByte('{')
+		curNode = curNode.nodes[0]
+		if curNode.bits&hellBitField == hellBitField {
+			result = result.addEscapedString(curNode.data)
+			result = result.addByte(':')
+		} else {
+			result = result.addString(curNode.data)
+		}
+		curNode = curNode.next
+		s++
+		goto encodeSkip
+	case hellBitArray:
+		if len(curNode.nodes) == 0 {
+			result = result.addString("[]")
+			curNode = curNode.next
+			goto popSkip
+		}
+		topNode = curNode
+		result = result.addByte('[')
+		curNode = curNode.nodes[0]
+		s++
+		goto encodeSkip
+	case hellBitNumber:
+		result = result.addString(curNode.data)
+	case hellBitString:
+		result = result.addEscapedString(curNode.data)
+	case hellBitEscapedString:
+		result = result.addString(curNode.data)
+	case hellBitFalse:
+		result = result.addString("false")
+	case hellBitTrue:
+		result = result.addString("true")
+	case hellBitNull:
+		result = result.addString("null")
+	}
+pop:
+	curNode = curNode.next
+popSkip:
+	if topNode.bits&hellBitArray == hellBitArray {
+		if curNode.bits&hellBitArrayEnd == hellBitArrayEnd {
+			result = result.addString("]")
+			curNode = topNode
+			topNode = topNode.parent
+			s--
+			if s == 0 {
+				return result.total()
+			}
+			goto pop
+		}
+		goto encode
+	} else if topNode.bits&hellBitObject == hellBitObject {
+		if curNode.bits&hellBitEnd == hellBitEnd {
+			result = result.addString("}")
+			curNode = topNode
+			topNode = topNode.parent
+			s--
+			if s == 0 {
+				return result.total()
+			}
+			goto pop
+		}
+		result = result.addString(",")
+		if curNode.bits&hellBitField == hellBitField {
+			result = result.addEscapedString(curNode.data)
+			result = result.addByte(':')
+		} else {
+			result = result.addString(curNode.data)
+		}
+		curNode = curNode.next
+		goto encodeSkip
+	} else {
+		return result.total()
+	}
+}
+
 // Dig legendary insane dig function
 func (n *Node) Dig(path ...string) *Node {
 	if n == nil {
