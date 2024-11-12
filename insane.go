@@ -1806,16 +1806,18 @@ func (n *Node) getIndex() int {
 // ******************** //
 
 func (d *decoder) initPool() {
-	d.nodePool = make([]*Node, StartNodePoolSize, StartNodePoolSize)
+	buf := make([]Node, StartNodePoolSize)
+	d.nodePool = make([]*Node, StartNodePoolSize)
 	for i := 0; i < StartNodePoolSize; i++ {
-		d.nodePool[i] = &Node{}
+		d.nodePool[i] = &buf[i]
 	}
 }
 
 func (d *decoder) expandPool() []*Node {
 	c := cap(d.nodePool)
+	buf := make([]Node, c)
 	for i := 0; i < c; i++ {
-		d.nodePool = append(d.nodePool, &Node{})
+		d.nodePool = append(d.nodePool, &buf[i])
 	}
 
 	return d.nodePool
