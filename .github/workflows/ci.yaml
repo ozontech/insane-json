@@ -32,14 +32,14 @@ jobs:
       - name: Test
         env:
           GOFLAGS: ${{ matrix.flags }}
-        run: go test -coverprofile=profile.out -covermode=atomic -v -coverpkg=./... ./...
+        run: go test -coverprofile=profile-go${{ matrix.go-version }}${{ matrix.flags }}.out -covermode=atomic -v -coverpkg=./... ./...
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: coverage
           path: |
-            profile.out
+            profile-go${{ matrix.go-version }}${{ matrix.flags }}.out
           if-no-files-found: error
           retention-days: 1
 
