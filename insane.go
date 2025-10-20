@@ -1290,6 +1290,44 @@ func (n *Node) MutateToStrict() *StrictNode {
 	return &StrictNode{n}
 }
 
+// CopyFromNode copies all data from the src node to the current node.
+// `root` must be a root of the current node to utilize the same node pool.
+// If the `src` node is a node tree, the whole tree will be copied recursively.
+// This function is designed to use for copying data from node of one JSON tree
+// to another so they don't mutate each others data and utilize their own node
+// pools so the garbage collector can clean released nodes correctly.
+func (n *Node) CopyFromNode(root *Root, src *Node) *Node {
+	if n == nil || src == nil {
+		return nil
+	}
+
+	n.bits = src.bits
+	n.data = strings.Clone(src.data)
+	n.next = n.getNode(root)
+	n.next.parent = n.parent
+	n.next.CopyFromNode(root, src.next)
+
+	if len(src.nodes) > 0 {
+		n.nodes = make([]*Node, 0, len(src.nodes))
+		for _, child := range src.nodes {
+			newChild := n.getNode(root)
+			newChild.parent = n
+			n.nodes = append(n.nodes, newChild.CopyFromNode(root, child))
+		}
+	}
+
+	if src.fields != nil {
+		srcFields := *src.fields
+		newFields := make(map[string]int, len(srcFields))
+		for k, v := range srcFields {
+			newFields[k] = v
+		}
+		n.fields = &newFields
+	}
+
+	return n
+}
+
 func (n *Node) DigField(path ...string) *Node {
 	if n == nil || len(path) == 0 {
 		return nil

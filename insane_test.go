@@ -204,7 +204,6 @@ func TestDecodeErr(t *testing.T) {
 		{json: `falsenull`, err: ErrUnexpectedJSONEnding},
 		{json: `null:`, err: ErrUnexpectedJSONEnding},
 
-
 		// ok
 		{json: `0`, err: nil},
 		{json: `1.0`, err: nil},
@@ -374,7 +373,7 @@ func TestAddElement(t *testing.T) {
 		for index := 0; index < test.count; index++ {
 			root.AddElement()
 			l := len(root.AsArray())
-			assert.True(t, root.Dig(strconv.Itoa(l - 1)).IsNull(), "wrong node type")
+			assert.True(t, root.Dig(strconv.Itoa(l-1)).IsNull(), "wrong node type")
 		}
 		assert.Equal(t, test.result, root.EncodeToString(), "wrong encoding")
 		Release(root)
@@ -1053,4 +1052,26 @@ func TestIndex(t *testing.T) {
 	node.setIndex(5)
 
 	assert.Equal(t, index, node.getIndex(), "wrong index")
+}
+
+func TestCopyFromNode(t *testing.T) {
+	json := `{"first":["s1","s2","s3"],"second":[{"s4":true},{"s5":false}]}`
+	root1, err := DecodeString(json)
+	assert.NoError(t, err, "error while decoding")
+	assert.NotNil(t, root1, "node shouldn't be nil")
+
+	root2 := Spawn()
+	clonedRoot := root2.CopyFromNode(root2, root1.Node)
+	assert.NotNil(t, clonedRoot, "node shouldn't be nil")
+
+	array1 := root1.Dig("first").AsArray()
+	array2 := root2.Dig("first").AsArray()
+	assert.Equal(t, len(array1), len(array2))
+	for i := range array1 {
+		assert.Equal(t, array1[i].AsString(), array2[i].AsString())
+	}
+
+	origVal := strings.Clone(array1[0].data)
+	array2[0].data = "newData"
+	assert.NotEqual(t, array1[0].AsString(), array2[0].AsString(), "values must be different, first value must be %q, but it was changed to %q", origVal, array1[0].data)
 }
