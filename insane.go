@@ -1290,6 +1290,27 @@ func (n *Node) MutateToStrict() *StrictNode {
 	return &StrictNode{n}
 }
 
+// ConvertToRoot **experimental** **not safe** function. It converts the node to `Root` and
+// removes it from its parent tree. The root parameter must the root of the current node,
+// so the converted root node utilizes the same decoder and nodePool. The node's parent is
+// becoming `nil` so it behaves like normal root node (e.g. on `(*Node).Suicide`).
+//
+// This function can be used when it is needed to use JSON subtree as a whole tree with
+// the root on the subtree top node. For example when treating array elements as separate
+// JSON trees.
+//
+// This function is unsafe because it shares the same decoder as its parent tree while the
+// decoder itself points to the parent root and that can lead to some unexpected behaviour.
+func (n *Node) ConvertToRoot(root *Root) *Root {
+	// remove node from its parent tree
+	n.Suicide()
+	n.parent = nil
+	return &Root{
+		n,
+		root.decoder,
+	}
+}
+
 // CopyFromNode copies all data from the src node to the current node.
 // `root` must be a root of the current node to utilize the same node pool.
 // If the `src` node is a node tree, the whole tree will be copied recursively.

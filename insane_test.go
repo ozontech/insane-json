@@ -1075,3 +1075,27 @@ func TestCopyFromNode(t *testing.T) {
 	array2[0].data = "newData"
 	assert.NotEqual(t, array1[0].AsString(), array2[0].AsString(), "values must be different, first value must be %q, but it was changed to %q", origVal, array1[0].data)
 }
+
+func TestConvertToRoot(t *testing.T) {
+	json := `[{"a":"1"},{"b":"2"},{"c":"3"}]`
+	root1, err := DecodeString(json)
+	assert.NoError(t, err, "error while decoding")
+	assert.NotNil(t, root1, "root shouldn't be nil")
+	assert.True(t, len(root1.AsArray()) == 3, "root must be an array with 3 elements")
+
+	node2 := root1.Dig("2")
+	assert.NotNil(t, node2, "node shouldn't be nil")
+	assert.True(t, node2.IsObject(), "node must be an object")
+
+	root1FieldVal := node2.Dig("c")
+	assert.NotNil(t, root1FieldVal, "node must not be nil")
+
+	root2 := node2.ConvertToRoot(root1)
+	assert.NotNil(t, root2, "root shouldn't be nil")
+	// after ConvertToRoot the node is deleted from its parent tree
+	assert.Nil(t, root1.Dig("2"), "node must be nil")
+
+	root2FieldVal := root2.Dig("c")
+	assert.NotNil(t, root2FieldVal, "node must not be nil")
+	assert.Equal(t, root1FieldVal.AsString(), root2FieldVal.AsString(), "values must be equal")
+}
