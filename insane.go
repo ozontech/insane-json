@@ -1865,17 +1865,25 @@ func (n *Node) getIndex() int {
 // ******************** //
 
 func (d *decoder) initPool() {
-	d.nodePool = make([]*Node, StartNodePoolSize, StartNodePoolSize)
+	s := make([]Node, StartNodePoolSize)
+	d.nodePool = make([]*Node, StartNodePoolSize)
 	for i := 0; i < StartNodePoolSize; i++ {
-		d.nodePool[i] = &Node{}
+		d.nodePool[i] = &s[i]
 	}
 }
 
 func (d *decoder) expandPool() []*Node {
 	c := cap(d.nodePool)
+	newSlice := make([]*Node, 0, c+c)
+	newSlice = append(newSlice, d.nodePool...)
+	s := make([]Node, c)
 	for i := 0; i < c; i++ {
-		d.nodePool = append(d.nodePool, &Node{})
+		newSlice = append(newSlice, &s[i])
 	}
+	for i := range d.nodePool {
+		d.nodePool[i] = nil
+	}
+	d.nodePool = newSlice
 
 	return d.nodePool
 }
