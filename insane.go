@@ -1290,6 +1290,65 @@ func (n *Node) MutateToStrict() *StrictNode {
 	return &StrictNode{n}
 }
 
+// ConvertToRoot **experimental** **not safe** function. It converts the node to `Root` and
+// removes it from its parent tree. The root parameter must the root of the current node,
+// so the converted root node utilizes the same decoder and nodePool. The node's parent is
+// becoming `nil` so it behaves like normal root node (e.g. on `(*Node).Suicide`).
+//
+// This function can be used when it is needed to use JSON subtree as a whole tree with
+// the root on the subtree top node. For example when treating array elements as separate
+// JSON trees.
+//
+// This function is unsafe because it shares the same decoder as its parent tree while the
+// decoder itself points to the parent root and that can lead to some unexpected behaviour.
+func (n *Node) ConvertToRoot(root *Root) *Root {
+	// remove node from its parent tree
+	n.Suicide()
+	n.parent = nil
+	return &Root{
+		n,
+		root.decoder,
+	}
+}
+
+// CopyFromNode copies all data from the src node to the current node.
+// `root` must be a root of the current node to utilize the same node pool.
+// If the `src` node is a node tree, the whole tree will be copied recursively.
+// This function is designed to use for copying data from node of one JSON tree
+// to another so they don't mutate each others data and utilize their own node
+// pools so the garbage collector can clean released nodes correctly.
+func (n *Node) CopyFromNode(root *Root, src *Node) *Node {
+	if n == nil || src == nil {
+		return nil
+	}
+
+	n.bits = src.bits
+	n.data = strings.Clone(src.data)
+	n.next = n.getNode(root)
+	n.next.parent = n.parent
+	n.next.CopyFromNode(root, src.next)
+
+	if len(src.nodes) > 0 {
+		n.nodes = make([]*Node, 0, len(src.nodes))
+		for _, child := range src.nodes {
+			newChild := n.getNode(root)
+			newChild.parent = n
+			n.nodes = append(n.nodes, newChild.CopyFromNode(root, child))
+		}
+	}
+
+	if src.fields != nil {
+		srcFields := *src.fields
+		newFields := make(map[string]int, len(srcFields))
+		for k, v := range srcFields {
+			newFields[k] = v
+		}
+		n.fields = &newFields
+	}
+
+	return n
+}
+
 func (n *Node) DigField(path ...string) *Node {
 	if n == nil || len(path) == 0 {
 		return nil
@@ -1806,17 +1865,25 @@ func (n *Node) getIndex() int {
 // ******************** //
 
 func (d *decoder) initPool() {
-	d.nodePool = make([]*Node, StartNodePoolSize, StartNodePoolSize)
+	s := make([]Node, StartNodePoolSize)
+	d.nodePool = make([]*Node, StartNodePoolSize)
 	for i := 0; i < StartNodePoolSize; i++ {
-		d.nodePool[i] = &Node{}
+		d.nodePool[i] = &s[i]
 	}
 }
 
 func (d *decoder) expandPool() []*Node {
 	c := cap(d.nodePool)
+	newSlice := make([]*Node, 0, c+c)
+	newSlice = append(newSlice, d.nodePool...)
+	s := make([]Node, c)
 	for i := 0; i < c; i++ {
-		d.nodePool = append(d.nodePool, &Node{})
+		newSlice = append(newSlice, &s[i])
 	}
+	for i := range d.nodePool {
+		d.nodePool[i] = nil
+	}
+	d.nodePool = newSlice
 
 	return d.nodePool
 }
