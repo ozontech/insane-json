@@ -602,6 +602,111 @@ func (n *Node) EncodeToString() string {
 	return toString(n.Encode([]byte{}))
 }
 
+// ByteLen legendary insane length function
+// counts encoded json size without allocations
+// use it for performance
+func (n *Node) ByteLen() int {
+	s := 0
+	curNode := n
+	topNode := n
+	size := 0
+
+	if len(curNode.nodes) == 0 {
+		if curNode.bits&hellBitObject == hellBitObject {
+			return 2
+		}
+		if curNode.bits&hellBitArray == hellBitArray {
+			return 2
+		}
+	}
+
+	goto encodeSkip
+encode:
+	size++
+encodeSkip:
+	switch curNode.bits & hellBitTypeFilter {
+	case hellBitObject:
+		if len(curNode.nodes) == 0 {
+			size += 2
+			curNode = curNode.next
+			goto popSkip
+		}
+		topNode = curNode
+		size++
+		curNode = curNode.nodes[0]
+		if curNode.bits&hellBitField == hellBitField {
+			size += escapedStringLen(curNode.data)
+			size++
+		} else {
+			size += len(curNode.data)
+		}
+		curNode = curNode.next
+		s++
+		goto encodeSkip
+	case hellBitArray:
+		if len(curNode.nodes) == 0 {
+			size += 2
+			curNode = curNode.next
+			goto popSkip
+		}
+		topNode = curNode
+		size++
+		curNode = curNode.nodes[0]
+		s++
+		goto encodeSkip
+	case hellBitNumber:
+		size += len(curNode.data)
+	case hellBitString:
+		size += escapedStringLen(curNode.data)
+	case hellBitEscapedString:
+		size += len(curNode.data)
+	case hellBitFalse:
+		size += 5
+	case hellBitTrue:
+		size += 4
+	case hellBitNull:
+		size += 4
+	}
+pop:
+	curNode = curNode.next
+popSkip:
+	if topNode.bits&hellBitArray == hellBitArray {
+		if curNode.bits&hellBitArrayEnd == hellBitArrayEnd {
+			size++
+			curNode = topNode
+			topNode = topNode.parent
+			s--
+			if s == 0 {
+				return size
+			}
+			goto pop
+		}
+		goto encode
+	} else if topNode.bits&hellBitObject == hellBitObject {
+		if curNode.bits&hellBitEnd == hellBitEnd {
+			size++
+			curNode = topNode
+			topNode = topNode.parent
+			s--
+			if s == 0 {
+				return size
+			}
+			goto pop
+		}
+		size++
+		if curNode.bits&hellBitField == hellBitField {
+			size += escapedStringLen(curNode.data)
+			size++
+		} else {
+			size += len(curNode.data)
+		}
+		curNode = curNode.next
+		goto encodeSkip
+	} else {
+		return size
+	}
+}
+
 // Encode legendary insane encode function
 // uses already created byte buffer to place json data so
 // mem allocations may occur only if buffer isn't long enough
@@ -2080,6 +2185,59 @@ func escapeString(out []byte, st string) []byte {
 	out = append(out, '"')
 
 	return out
+}
+
+func escapedStringLen(st string) int {
+	if !shouldEscape(st) {
+		return len(st) + 2
+	}
+
+	size := 2
+	s := toByte(st)
+	start := 0
+	for i := 0; i < len(s); {
+		if b := s[i]; b < utf8.RuneSelf {
+			if 0x20 <= b && b != '\\' && b != '"' && b != '<' && b != '>' && b != '&' {
+				i++
+				continue
+			}
+			size += i - start
+			switch b {
+			case '\\', '"':
+				size += 2
+			case '\n', '\r', '\t':
+				size += 2
+			default:
+				size += 6
+			}
+			i++
+			start = i
+			continue
+		}
+
+		c, sizeRune := utf8.DecodeRune(s[i:])
+		if c == utf8.RuneError && sizeRune == 1 {
+			size += i - start
+			size += 6
+			i += sizeRune
+			start = i
+			continue
+		}
+
+		if c == '\u2028' || c == '\u2029' {
+			size += i - start
+			size += 6
+			i += sizeRune
+			start = i
+			continue
+		}
+		i += sizeRune
+	}
+	if start < len(s) {
+		size += len(s) - start
+	}
+
+	return size
 }
 
 func shouldEscape(s string) bool {
