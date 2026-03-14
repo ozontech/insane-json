@@ -71,7 +71,7 @@ var (
 		},
 	}
 
-	numbersMap = make([]byte, 256)
+	numbersMap [256]byte
 
 	// decode errors
 	ErrEmptyJSON                    = errors.New("json is empty")
@@ -98,6 +98,9 @@ var (
 )
 
 func init() {
+	for c := byte('0'); c <= '9'; c++ {
+		numbersMap[c] = 1
+	}
 	numbersMap['.'] = 1
 	numbersMap['-'] = 1
 	numbersMap['e'] = 1
@@ -518,7 +521,7 @@ decode:
 	default:
 		o--
 		t = o
-		for ; o != l && ((json[o] >= '0' && json[o] <= '9') || numbersMap[json[o]] == 1); o++ {
+		for ; o != l && numbersMap[json[o]] == 1; o++ {
 		}
 		if t == o {
 			return nil, insaneErr(ErrExpectedValue, json, o)
