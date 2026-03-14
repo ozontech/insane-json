@@ -213,8 +213,9 @@ func (d *decoder) decode(json string, shouldReset bool) (*Node, error) {
 	o := len(d.buf)
 
 	d.buf = append(d.buf, json...)
+	d.buf = append(d.buf, 0) // sentinel byte for safe loop termination
 	json = toString(d.buf)
-	l := len(json)
+	l := len(json) - 1
 
 	nodePool := d.nodePool
 	nodePoolLen := len(nodePool)
@@ -521,7 +522,7 @@ decode:
 	default:
 		o--
 		t = o
-		for ; o != l && numbersMap[json[o]] == 1; o++ {
+		for ; numbersMap[json[o]] == 1; o++ {
 		}
 		if t == o {
 			return nil, insaneErr(ErrExpectedValue, json, o)

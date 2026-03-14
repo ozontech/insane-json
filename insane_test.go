@@ -1,6 +1,7 @@
 package insaneJSON
 
 import (
+	"encoding/json"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -1083,4 +1084,123 @@ func TestFastPositiveAtoi(t *testing.T) {
 			assert.Equal(t, tt.expected, fastPositiveAtoi(tt.input))
 		})
 	}
+}
+
+func FuzzDecodeEncode(f *testing.F) {
+	f.Add([]byte(`{}`))
+	f.Add([]byte(`[]`))
+	f.Add([]byte(`null`))
+	f.Add([]byte(`true`))
+	f.Add([]byte(`false`))
+	f.Add([]byte(`0`))
+	f.Add([]byte(`-1`))
+	f.Add([]byte(`3.14`))
+	f.Add([]byte(`1e10`))
+	f.Add([]byte(`""`))
+	f.Add([]byte(`"hello"`))
+	f.Add([]byte(`"hello\"world"`))
+	f.Add([]byte(`"hello\\\"world"`))
+	f.Add([]byte(`"\u0000"`))
+	f.Add([]byte(`"\n\r\t"`))
+	f.Add([]byte(`{"a":"b"}`))
+	f.Add([]byte(`{"a":1,"b":2,"c":3}`))
+	f.Add([]byte(`[1,2,3]`))
+	f.Add([]byte(`[{"a":"b"},{"c":"d"}]`))
+	f.Add([]byte(`{"a":{"b":{"c":"d"}}}`))
+	f.Add([]byte(`{"a":[1,[2,[3]]]}`))
+	f.Add([]byte(`   {"a" : "b"}   `))
+	f.Add([]byte(`[null,true,false,1,"s",{},[]]`))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		root, err := DecodeBytes(data)
+		if err != nil {
+			return
+		}
+		defer Release(root)
+
+		// encode must not panic
+		encoded := root.EncodeToString()
+
+		// re-decode encoded result must succeed
+		root2, err := DecodeString(encoded)
+		if err != nil {
+			t.Fatalf("re-decode failed: %v\ninput:   %q\nencoded: %q", err, data, encoded)
+		}
+		defer Release(root2)
+
+		// double encode must be stable
+		encoded2 := root2.EncodeToString()
+		if encoded != encoded2 {
+			t.Fatalf("encode not stable\nfirst:  %q\nsecond: %q", encoded, encoded2)
+		}
+	})
+}
+
+func FuzzDecodeDig(f *testing.F) {
+	f.Add([]byte(`{"a":{"b":[1,2,3]}}`), "a", "b", "1")
+	f.Add([]byte(`[0,1,2]`), "0", "", "")
+	f.Add([]byte(`{"x":"y"}`), "x", "", "")
+	f.Add([]byte(`{"a":{"b":{"c":"d"}}}`), "a", "b", "c")
+
+	f.Fuzz(func(t *testing.T, data []byte, p1, p2, p3 string) {
+		root, err := DecodeBytes(data)
+		if err != nil {
+			return
+		}
+		defer Release(root)
+
+		path := make([]string, 0, 3)
+		for _, p := range []string{p1, p2, p3} {
+			if p != "" {
+				path = append(path, p)
+			}
+		}
+
+		// Dig must not panic
+		node := root.Dig(path...)
+		if node == nil {
+			return
+		}
+
+		// type checks must not panic
+		_ = node.IsObject()
+		_ = node.IsArray()
+		_ = node.IsString()
+		_ = node.IsNumber()
+		_ = node.IsNull()
+		_ = node.IsTrue()
+		_ = node.IsFalse()
+
+		// value extraction must not panic
+		_ = node.AsString()
+		_ = node.AsInt()
+		_ = node.AsFloat()
+		_ = node.AsBool()
+	})
+}
+
+func FuzzDecodeValidJSON(f *testing.F) {
+	f.Add([]byte(`{"a":"b","c":[1,2,3],"d":true,"e":null}`))
+	f.Add([]byte(`[1,"two",3.0,true,null,{"a":"b"}]`))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		// only fuzz inputs that stdlib considers valid
+		if !json.Valid(data) {
+			return
+		}
+
+		root, err := DecodeBytes(data)
+		if err != nil {
+			t.Fatalf("stdlib says valid but decode failed: %v\ninput: %q", err, data)
+		}
+		defer Release(root)
+
+		encoded := root.EncodeToString()
+
+		root2, err := DecodeString(encoded)
+		if err != nil {
+			t.Fatalf("re-decode failed: %v\nencoded: %q", err, encoded)
+		}
+		defer Release(root2)
+	})
 }
