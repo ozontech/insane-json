@@ -794,8 +794,8 @@ get:
 	}
 	return nil
 getArray:
-	index, err := strconv.Atoi(curField)
-	if err != nil || index < 0 || index >= len(node.nodes) {
+	index := fastPositiveAtoi(curField)
+	if index < 0 || index >= len(node.nodes) {
 		return nil
 	}
 	curDepth++
@@ -2095,6 +2095,23 @@ func shouldEscape(s string) bool {
 	}
 
 	return false
+}
+
+// fastPositiveAtoi parses non-negative integer from string without allocations.
+// Returns -1 if string is empty, not a valid number, or negative.
+func fastPositiveAtoi(s string) int {
+	if len(s) == 0 {
+		return -1
+	}
+	n := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i] - '0'
+		if c > 9 {
+			return -1
+		}
+		n = n*10 + int(c)
+	}
+	return n
 }
 
 func decodeInt64(s string) int64 {

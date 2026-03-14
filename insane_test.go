@@ -1054,3 +1054,33 @@ func TestIndex(t *testing.T) {
 
 	assert.Equal(t, index, node.getIndex(), "wrong index")
 }
+
+func TestFastPositiveAtoi(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int
+	}{
+		{"0", 0},
+		{"1", 1},
+		{"9", 9},
+		{"10", 10},
+		{"123", 123},
+		{"999999", 999999},
+		{"", -1},
+		{"-1", -1},
+		{"-123", -1},
+		{"abc", -1},
+		{"12abc", -1},
+		{"abc12", -1},
+		{" 1", -1},
+		{"1 ", -1},
+		{"+1", -1},
+		{"1.5", -1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.expected, fastPositiveAtoi(tt.input))
+		})
+	}
+}
