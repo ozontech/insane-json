@@ -151,11 +151,10 @@ type StrictNode struct {
 }
 
 type decoder struct {
-	buf        []byte
-	root       Root
-	nodePool   []*Node
-	nodeChunks [][]Node
-	nodeCount  int
+	buf       []byte
+	root      Root
+	nodePool  []*Node
+	nodeCount int
 }
 
 /*
@@ -1812,7 +1811,6 @@ func (n *Node) getIndex() int {
 
 func (d *decoder) initPool() {
 	chunk := make([]Node, StartNodePoolSize)
-	d.nodeChunks = [][]Node{chunk}
 	d.nodePool = make([]*Node, StartNodePoolSize)
 	for i := range chunk {
 		d.nodePool[i] = &chunk[i]
@@ -1822,7 +1820,6 @@ func (d *decoder) initPool() {
 func (d *decoder) expandPool() []*Node {
 	c := len(d.nodePool)
 	chunk := make([]Node, c)
-	d.nodeChunks = append(d.nodeChunks, chunk)
 	for i := range chunk {
 		d.nodePool = append(d.nodePool, &chunk[i])
 	}
