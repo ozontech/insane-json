@@ -1,3 +1,4 @@
-cpu.out
+*.out
 *.prof
 *.test
+vendor

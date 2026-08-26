@@ -173,18 +173,19 @@ fmt.Println(root.EncodeToString())
 | Function | Description |
 |---|---|
 | `DecodeString(json) (*Root, error)` | Decode JSON string, returns Root from pool |
-| `DecodeBytes(json) (*Root, error)` | Decode JSON byte slice |
+| `DecodeBytes(json) (*Root, error)` | Decode JSON byte slice, returns Root from pool |
 | `Spawn() *Root` | Get an empty Root from pool |
 | `Release(root)` | Return Root to pool |
 | `root.DecodeString(json) error` | Reuse Root to decode another JSON |
 | `root.DecodeBytes(json) error` | Reuse Root to decode another JSON |
 | `root.DecodeStringAdditional(json) (*Node, error)` | Decode JSON using Root's node pool without clearing |
+| `root.DecodeBytesAdditional(json) (*Node, error)` | Decode JSON using Root's node pool without clearing |
 
 ### Navigate
 
 | Function | Description |
 |---|---|
-| `node.Dig(path...) *Node` | Navigate to nested value. Returns nil if not found |
+| `node.Dig(path...) *Node` | Navigate to nested value. Returns nil if not found. You can also access elements by index. See [Working with nested JSON](#working-with-nested-json) |
 | `node.DigStrict(path...) (*StrictNode, error)` | Same as Dig but returns error if not found |
 | `node.AsFields() []*Node` | Get object field nodes |
 | `node.AsArray() []*Node` | Get array element nodes |
