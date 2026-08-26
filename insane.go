@@ -71,7 +71,7 @@ var (
 		},
 	}
 
-	numbersMap = make([]byte, 256)
+	numbersMap [256]byte
 
 	// decode errors
 	ErrEmptyJSON                    = errors.New("json is empty")
@@ -98,6 +98,9 @@ var (
 )
 
 func init() {
+	for c := byte('0'); c <= '9'; c++ {
+		numbersMap[c] = 1
+	}
 	numbersMap['.'] = 1
 	numbersMap['-'] = 1
 	numbersMap['e'] = 1
@@ -210,8 +213,9 @@ func (d *decoder) decode(json string, shouldReset bool) (*Node, error) {
 	o := len(d.buf)
 
 	d.buf = append(d.buf, json...)
+	d.buf = append(d.buf, 0) // sentinel byte for safe loop termination
 	json = toString(d.buf)
-	l := len(json)
+	l := len(json) - 1
 
 	nodePool := d.nodePool
 	nodePoolLen := len(nodePool)
@@ -518,7 +522,7 @@ decode:
 	default:
 		o--
 		t = o
-		for ; o != l && ((json[o] >= '0' && json[o] <= '9') || numbersMap[json[o]] == 1); o++ {
+		for ; numbersMap[json[o]] == 1; o++ {
 		}
 		if t == o {
 			return nil, insaneErr(ErrExpectedValue, json, o)
@@ -794,8 +798,8 @@ get:
 	}
 	return nil
 getArray:
-	index, err := strconv.Atoi(curField)
-	if err != nil || index < 0 || index >= len(node.nodes) {
+	index := fastPositiveAtoi(curField)
+	if index < 0 || index >= len(node.nodes) {
 		return nil
 	}
 	curDepth++
@@ -1806,16 +1810,18 @@ func (n *Node) getIndex() int {
 // ******************** //
 
 func (d *decoder) initPool() {
-	d.nodePool = make([]*Node, StartNodePoolSize, StartNodePoolSize)
-	for i := 0; i < StartNodePoolSize; i++ {
-		d.nodePool[i] = &Node{}
+	chunk := make([]Node, StartNodePoolSize)
+	d.nodePool = make([]*Node, StartNodePoolSize)
+	for i := range chunk {
+		d.nodePool[i] = &chunk[i]
 	}
 }
 
 func (d *decoder) expandPool() []*Node {
-	c := cap(d.nodePool)
-	for i := 0; i < c; i++ {
-		d.nodePool = append(d.nodePool, &Node{})
+	c := len(d.nodePool)
+	chunk := make([]Node, c)
+	for i := range chunk {
+		d.nodePool = append(d.nodePool, &chunk[i])
 	}
 
 	return d.nodePool
@@ -2095,6 +2101,23 @@ func shouldEscape(s string) bool {
 	}
 
 	return false
+}
+
+// fastPositiveAtoi parses non-negative integer from string without allocations.
+// Returns -1 if string is empty, not a valid number, or negative.
+func fastPositiveAtoi(s string) int {
+	if len(s) == 0 {
+		return -1
+	}
+	n := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i] - '0'
+		if c > 9 {
+			return -1
+		}
+		n = n*10 + int(c)
+	}
+	return n
 }
 
 func decodeInt64(s string) int64 {
