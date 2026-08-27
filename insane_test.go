@@ -244,6 +244,41 @@ func TestEncode(t *testing.T) {
 	assert.Equal(t, json, root.EncodeToString(), "wrong encoding")
 }
 
+func TestByteLen(t *testing.T) {
+	tests := []string{
+		`{"a":1}`,
+		`["a","b"]`,
+		`{"a":"x\n","b":"<>&"}`,
+		`{"a":"\"\\\t"}`,
+		`{"a":{"b":[1,2,3]}}`,
+		`{"a\"b":1}`,
+		`"plain"`,
+		`""`,
+		`0`,
+		`-12.34`,
+		`true`,
+		`false`,
+		`null`,
+		`{"":""}`,
+		`[]`,
+		`{}`,
+		`{"arr":[[],[{}],["x"]]}`,
+		`{"unicode":"\u2028\u2029"}`,
+		`{"esc":"line1\\nline2\\tend"}`,
+		`{"mixed":[{"a":1},2,"3",false,null]}`,
+		`{"deep":{"a":{"b":{"c":{"d":{"e":[1,2,3]}}}}}}`,
+	}
+
+	for _, json := range tests {
+		root, err := DecodeString(json)
+		assert.NoError(t, err, "error while decoding %s", json)
+		assert.NotNil(t, root, "node shouldn't be nil")
+
+		assert.Equal(t, len(root.EncodeToByte()), root.ByteLen(), "wrong byte len for %s", json)
+		Release(root)
+	}
+}
+
 func TestString(t *testing.T) {
 	json := `["hello \\ \" op \\ \" op op","shit"]`
 
